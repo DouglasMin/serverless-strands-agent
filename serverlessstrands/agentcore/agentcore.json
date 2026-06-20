@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "serverlessstrands",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "serverlessstrands"
+  },
+  "runtimes": [
+    {
+      "name": "MainAgent",
+      "build": "Container",
+      "entrypoint": "main.py",
+      "codeLocation": "app/MainAgent/",
+      "runtimeVersion": "PYTHON_3_14",
+      "envVars": [
+        {
+          "name": "MEMORY_ID",
+          "value": "serverlessstrands_ChatMemory-4Q3NbO5016"
+        }
+      ],
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP"
+    }
+  ],
+  "memories": [
+    {
+      "name": "ChatMemory",
+      "eventExpiryDuration": 30,
+      "strategies": [
+        {
+          "type": "SUMMARIZATION",
+          "namespaceTemplates": [
+            "/summaries/{actorId}/{sessionId}"
+          ]
+        },
+        {
+          "type": "USER_PREFERENCE",
+          "namespaceTemplates": [
+            "/users/{actorId}/preferences"
+          ]
+        },
+        {
+          "type": "SEMANTIC",
+          "namespaceTemplates": [
+            "/users/{actorId}/facts"
+          ]
+        }
+      ]
+    }
+  ],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [
+    {
+      "name": "MainGateway",
+      "description": "Gateway for MainGateway",
+      "targets": [],
+      "authorizerType": "NONE",
+      "enableSemanticSearch": true,
+      "exceptionLevel": "NONE"
+    }
+  ],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "httpGateways": [],
+  "datasets": []
+}

@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build outputs
+frontend/dist/
+*.js.map
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Terraform state (contains secrets)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# AgentCore CLI internals
+serverlessstrands/agentcore/cdk/
+serverlessstrands/agentcore/.cli/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Lambda build artifacts
+backend/node_modules/
+
+# Logs
+*.log
+*.tsbuildinfo
+.terraform-lambda.zip

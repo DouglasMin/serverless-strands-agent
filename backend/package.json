@@ -1,0 +1,14 @@
+{
+  "name": "serverlessstrands-chat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1053.0",
+    "@aws-sdk/client-dynamodb": "^3.1053.0",
+    "@aws-sdk/lib-dynamodb": "^3.1053.0"
+  }
+}
