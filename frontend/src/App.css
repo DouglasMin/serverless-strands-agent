@@ -467,8 +467,10 @@
 }
 
 .tool-badge__icon {
-  font-size: 12px;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .tool-badge__name {

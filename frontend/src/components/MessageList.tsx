@@ -106,16 +106,21 @@ function Message({
 }
 
 const TOOL_ICONS: Record<string, string> = {
-  TavilySearchPost: "🔍",
-  TavilySearchExtract: "📄",
-  add_numbers: "🧮",
-  stock_quote: "📈",
-  stock_history: "📊",
-  stock_compare: "⚖️",
-  financial_news: "📰",
-  stock_analysis: "🏦",
-  options_chain: "🎯",
+  TavilySearchPost: "/tool-icons/tavily-search.png",
+  TavilySearchExtract: "/tool-icons/tavily.png",
+  add_numbers: "/tool-icons/calculator.svg",
+  stock_quote: "/tool-icons/financial.svg",
+  stock_history: "/tool-icons/financial.svg",
+  stock_compare: "/tool-icons/financial.svg",
+  financial_news: "/tool-icons/financial-news.svg",
+  stock_analysis: "/tool-icons/financial.svg",
+  options_chain: "/tool-icons/financial.svg",
 };
+
+function getToolIcon(name: string): string {
+  const short = name.includes("___") ? name.split("___")[1] : name;
+  return TOOL_ICONS[short] ?? TOOL_ICONS[name] ?? "/tool-icons/workspace.svg";
+}
 
 function toolLabel(name: string): string {
   const short = name.includes("___") ? name.split("___")[1] : name;
@@ -127,11 +132,13 @@ function ToolBadges({ tools }: { tools: ToolUse[] }) {
     <div className="msg__tools">
       {tools.map((t) => (
         <span key={t.name} className="tool-badge">
-          <span className="tool-badge__icon">
-            {TOOL_ICONS[toolLabel(t.name).replace(/\s/g, "")] ??
-              TOOL_ICONS[t.name.includes("___") ? t.name.split("___")[1] : t.name] ??
-              "⚡"}
-          </span>
+          <img
+            className="tool-badge__icon"
+            src={getToolIcon(t.name)}
+            alt=""
+            width={16}
+            height={16}
+          />
           <span className="tool-badge__name mono">{toolLabel(t.name)}</span>
         </span>
       ))}
