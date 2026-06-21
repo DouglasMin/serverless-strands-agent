@@ -29,3 +29,10 @@ output "lambda_image_uri" {
 output "lambda_ecr_repository_url" {
   value = module.backend.ecr_repository_url
 }
+
+# ── Tool Lambdas ─────────────────────────────────────────────
+
+output "tool_finance_arn" {
+  description = "ARN of the finance tool Lambda — use this when adding the Gateway target."
+  value       = module.tool_finance.function_arn
+}

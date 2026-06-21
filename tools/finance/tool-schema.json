@@ -1,0 +1,103 @@
+[
+  {
+    "name": "stock_quote",
+    "description": "Get real-time stock quote with price, change, volume, market cap, P/E ratio, EPS, and dividend yield for a given ticker symbol.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Stock ticker symbol (e.g. AAPL, TSLA, MSFT)"
+        }
+      },
+      "required": ["symbol"]
+    }
+  },
+  {
+    "name": "stock_history",
+    "description": "Get historical OHLCV (Open/High/Low/Close/Volume) price data with summary statistics including total change, period high/low, and average volume.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Stock ticker symbol (e.g. AAPL, TSLA, MSFT)"
+        },
+        "period": {
+          "type": "string",
+          "description": "Time period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd, max. Default: 1mo"
+        },
+        "interval": {
+          "type": "string",
+          "description": "Data interval: 1m, 5m, 15m, 1h, 1d, 1wk, 1mo. Default: 1d"
+        }
+      },
+      "required": ["symbol"]
+    }
+  },
+  {
+    "name": "stock_compare",
+    "description": "Compare multiple stocks side by side showing price, change%, P/E ratio, market cap, and analyst recommendation for each.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Array of stock ticker symbols to compare (max 5). E.g. [\"AAPL\", \"MSFT\", \"GOOGL\"]"
+        }
+      },
+      "required": ["symbols"]
+    }
+  },
+  {
+    "name": "financial_news",
+    "description": "Get the latest financial news articles for a stock including title, publisher, date, and URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Stock ticker symbol (e.g. AAPL, TSLA, MSFT)"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of articles to return (1-10). Default: 5"
+        }
+      },
+      "required": ["symbol"]
+    }
+  },
+  {
+    "name": "stock_analysis",
+    "description": "Get comprehensive fundamental analysis including valuation metrics (P/E, PEG, EV/EBITDA), profitability (margins, ROE, ROA), growth rates, financial health (debt/equity, current ratio), and analyst consensus targets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Stock ticker symbol (e.g. AAPL, TSLA, MSFT)"
+        }
+      },
+      "required": ["symbol"]
+    }
+  },
+  {
+    "name": "options_chain",
+    "description": "Get options chain data (strike, last price, bid, ask, volume, open interest, implied volatility) for the nearest expiry date.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "description": "Stock ticker symbol (e.g. AAPL, TSLA, MSFT)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Option type: 'calls' or 'puts'. Default: calls"
+        }
+      },
+      "required": ["symbol"]
+    }
+  }
+]

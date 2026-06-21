@@ -109,6 +109,12 @@ const TOOL_ICONS: Record<string, string> = {
   TavilySearchPost: "🔍",
   TavilySearchExtract: "📄",
   add_numbers: "🧮",
+  stock_quote: "📈",
+  stock_history: "📊",
+  stock_compare: "⚖️",
+  financial_news: "📰",
+  stock_analysis: "🏦",
+  options_chain: "🎯",
 };
 
 function toolLabel(name: string): string {

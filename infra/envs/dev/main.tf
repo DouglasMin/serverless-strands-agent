@@ -28,3 +28,19 @@ module "web" {
   name_prefix     = local.name_prefix
   lambda_url_host = module.backend.function_url_host
 }
+
+# ─────────────────────────────────────────────────────────────
+# Tool Lambdas — Gateway targets (one module per tool)
+# ─────────────────────────────────────────────────────────────
+
+module "tool_finance" {
+  source = "../../modules/tool-lambda"
+
+  name_prefix       = local.name_prefix
+  tool_name         = "finance"
+  region            = var.region
+  aws_profile       = var.aws_profile
+  lambda_source_dir = "${path.module}/../../../tools/finance"
+  timeout           = 30
+  memory_size       = 256
+}
