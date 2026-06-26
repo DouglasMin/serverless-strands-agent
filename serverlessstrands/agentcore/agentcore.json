@@ -18,6 +18,14 @@
         {
           "name": "MEMORY_ID",
           "value": "serverlessstrands_ChatMemory-4Q3NbO5016"
+        },
+        {
+          "name": "OAUTH_CALLBACK_URL",
+          "value": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback"
+        },
+        {
+          "name": "WORKLOAD_NAME",
+          "value": "serverlessstrands_MainAgent-4l0O95618E"
         }
       ],
       "networkMode": "PUBLIC",

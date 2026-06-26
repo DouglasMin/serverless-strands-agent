@@ -96,6 +96,8 @@ function parseFrame(frame: string): StreamEvent | null {
       return { type: "delta", text: safeJson(body)?.text ?? body };
     case "tool_use":
       return { type: "tool_use", name: safeJson(body)?.name ?? body };
+    case "auth_url":
+      return { type: "auth_url", url: safeJson(body)?.url ?? body };
     case "done":
       return { type: "done", sessionId: safeJson(body)?.sessionId ?? "" };
     case "error":

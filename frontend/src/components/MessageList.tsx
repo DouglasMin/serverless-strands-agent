@@ -115,6 +115,13 @@ const TOOL_ICONS: Record<string, string> = {
   financial_news: "/tool-icons/financial-news.svg",
   stock_analysis: "/tool-icons/financial.svg",
   options_chain: "/tool-icons/financial.svg",
+  github_list_repos: "/tool-icons/github.svg",
+  github_get_repo: "/tool-icons/github.svg",
+  github_list_issues: "/tool-icons/github.svg",
+  google_calendar_list_events: "/tool-icons/google-calendar.svg",
+  google_calendar_today: "/tool-icons/google-calendar.svg",
+  notion_search: "/tool-icons/notion.svg",
+  notion_get_page: "/tool-icons/notion.svg",
 };
 
 function getToolIcon(name: string): string {

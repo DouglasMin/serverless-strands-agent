@@ -128,14 +128,20 @@ async function handleChat(event, responseStream) {
 
   let assistantText = "";
   try {
-    const resp = await agent.send(
-      new InvokeAgentRuntimeCommand({
-        agentRuntimeArn: AGENT_RUNTIME_ARN,
-        runtimeSessionId: sessionId,
-        qualifier: "DEFAULT",
-        payload: new TextEncoder().encode(JSON.stringify({ prompt, userId }))
-      })
+    const command = new InvokeAgentRuntimeCommand({
+      agentRuntimeArn: AGENT_RUNTIME_ARN,
+      runtimeSessionId: sessionId,
+      qualifier: "DEFAULT",
+      payload: new TextEncoder().encode(JSON.stringify({ prompt, userId }))
+    });
+    command.middlewareStack.add(
+      (next) => (args) => {
+        args.request.headers["X-Amzn-Bedrock-AgentCore-Runtime-User-Id"] = userId;
+        return next(args);
+      },
+      { step: "build", name: "addUserIdHeader" }
     );
+    const resp = await agent.send(command);
 
     // AgentCore emits its own SSE — `data:` line per JSON-encoded text chunk.
     const decoder = new TextDecoder();
@@ -157,12 +163,19 @@ async function handleChat(event, responseStream) {
                 writeFrame("tool_use", { name: inner.__tool_use__ });
                 continue;
               }
+              if (inner && typeof inner === "object" && inner.__auth_url__) {
+                writeFrame("auth_url", { url: inner.__auth_url__ });
+                continue;
+              }
             } catch {
               // not inner JSON — it's plain text
             }
             text = outer;
           } else if (typeof outer === "object" && outer.__tool_use__) {
             writeFrame("tool_use", { name: outer.__tool_use__ });
+            continue;
+          } else if (typeof outer === "object" && outer.__auth_url__) {
+            writeFrame("auth_url", { url: outer.__auth_url__ });
             continue;
           } else {
             text = JSON.stringify(outer);
@@ -272,6 +285,47 @@ async function handleGetSession(event, responseStream, sessionId) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// POST /api/auth/complete — session binding callback
+// ─────────────────────────────────────────────────────────────
+
+async function handleAuthComplete(event, responseStream) {
+  const params = event?.queryStringParameters ?? {};
+  const sessionUri = params.session_id;
+
+  if (!sessionUri) {
+    writeJson(responseStream, { error: "session_id query parameter required" });
+    return;
+  }
+
+  let body;
+  try {
+    body = parseBody(event);
+  } catch {
+    body = {};
+  }
+
+  const userId = body.userId || params.userId;
+  if (!userId) {
+    writeJson(responseStream, { error: "userId required" });
+    return;
+  }
+
+  try {
+    const { CompleteResourceTokenAuthCommand } =
+      await import("@aws-sdk/client-bedrock-agentcore");
+    await agent.send(
+      new CompleteResourceTokenAuthCommand({
+        sessionUri,
+        userIdentifier: { userId }
+      })
+    );
+    writeJson(responseStream, { success: true });
+  } catch (err) {
+    writeJson(responseStream, { error: `CompleteResourceTokenAuth failed: ${err?.message ?? err}` });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Entry — route on method + rawPath
 // ─────────────────────────────────────────────────────────────
 
@@ -281,13 +335,22 @@ export const handler = awslambda.streamifyResponse(
     const rawPath = event?.rawPath ?? "/";
 
     if (method === "OPTIONS") {
-      // Function URL handles CORS preflight headers; just close cleanly.
       responseStream.end();
       return;
     }
 
     if (method === "POST" && rawPath.endsWith("/chat")) {
       await handleChat(event, responseStream);
+      return;
+    }
+
+    if (method === "POST" && rawPath.includes("/auth/complete")) {
+      await handleAuthComplete(event, responseStream);
+      return;
+    }
+
+    if (method === "GET" && rawPath.includes("/auth/complete")) {
+      await handleAuthComplete(event, responseStream);
       return;
     }
 

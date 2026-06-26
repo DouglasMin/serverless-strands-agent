@@ -127,9 +127,13 @@ resource "aws_iam_role_policy" "ddb" {
       Action = [
         "dynamodb:GetItem",
         "dynamodb:PutItem",
-        "dynamodb:UpdateItem"
+        "dynamodb:UpdateItem",
+        "dynamodb:Query"
       ]
-      Resource = var.sessions_table_arn
+      Resource = [
+        var.sessions_table_arn,
+        "${var.sessions_table_arn}/index/*"
+      ]
     }]
   })
 }
@@ -140,16 +144,31 @@ resource "aws_iam_role_policy" "agentcore" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "bedrock-agentcore:InvokeAgentRuntime"
-      ]
-      Resource = [
-        var.agent_runtime_arn,
-        "${var.agent_runtime_arn}/*"
-      ]
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock-agentcore:InvokeAgentRuntime",
+          "bedrock-agentcore:InvokeAgentRuntimeForUser"
+        ]
+        Resource = [
+          var.agent_runtime_arn,
+          "${var.agent_runtime_arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock-agentcore:CompleteResourceTokenAuth"
+        ]
+        Resource = ["*"]
+      },
+      {
+        Effect = "Allow"
+        Action = "secretsmanager:GetSecretValue"
+        Resource = "arn:aws:secretsmanager:ap-northeast-2:612529367436:secret:bedrock-agentcore-identity!default/oauth2/*"
+      }
+    ]
   })
 }
 

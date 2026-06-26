@@ -1,0 +1,53 @@
+[
+  {
+    "name": "TavilySearchPost",
+    "description": "Search the web using Tavily AI search engine. Returns relevant results with an AI-generated answer summary. Use for current events, factual questions, and general web search.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query text"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of results (1-10). Default: 5"
+        },
+        "search_depth": {
+          "type": "string",
+          "description": "Search depth: 'basic' or 'advanced'. Default: basic"
+        },
+        "include_answer": {
+          "type": "boolean",
+          "description": "Include AI-generated answer. Default: true"
+        },
+        "include_domains": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Only include results from these domains"
+        },
+        "exclude_domains": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Exclude results from these domains"
+        }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "TavilySearchExtract",
+    "description": "Extract and summarize content from specific URLs using Tavily. Use when you need to read the content of a specific web page.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "urls": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Array of URLs to extract content from"
+        }
+      },
+      "required": ["urls"]
+    }
+  }
+]

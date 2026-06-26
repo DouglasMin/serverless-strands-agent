@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.1053.0",
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1053.0",
     "@aws-sdk/client-dynamodb": "^3.1053.0",
     "@aws-sdk/lib-dynamodb": "^3.1053.0"
   }

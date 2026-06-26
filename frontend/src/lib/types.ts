@@ -29,6 +29,7 @@ export type StreamEvent =
   | { type: "session"; sessionId: string }
   | { type: "delta"; text: string }
   | { type: "tool_use"; name: string }
+  | { type: "auth_url"; url: string }
   | { type: "done"; sessionId: string }
   | { type: "error"; message: string }
   | { type: "warn"; message: string };

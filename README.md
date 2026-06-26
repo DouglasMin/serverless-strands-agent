@@ -10,12 +10,14 @@ User → CloudFront (CDN) → S3 (React SPA)
                                      ↓
                               AgentCore Runtime (Strands Agent, Python)
                                      ↓
-                              ┌──────┴──────┐
-                              │             │
-                         Bedrock LLM    AgentCore Gateway
-                              │             │
-                       AgentCore Memory   MCP Tools (Tavily)
-                       (STM + LTM)
+                   ┌─────────────────┼─────────────────┐
+                   │                 │                  │
+            Bedrock LLM     AgentCore Gateway    AgentCore Identity (3LO)
+                   │              │    │                │
+          AgentCore Memory   Yahoo   Tavily    ┌───────┼───────┐
+          (STM + LTM)       Finance  Search    │       │       │
+                                            GitHub  Google   Notion
+                                                   Calendar
 ```
 
 ## Tech Stack
@@ -28,7 +30,8 @@ User → CloudFront (CDN) → S3 (React SPA)
 | Agent Runtime | AgentCore Runtime (Firecracker microVM) |
 | Agent Framework | Strands Agents (Python) |
 | Memory | AgentCore Memory (STM + LTM: Summarization, User Preference, Semantic) |
-| Tools | AgentCore Gateway → Tavily Search |
+| Tools (Gateway) | AgentCore Gateway → Yahoo Finance, Tavily Search (Lambda targets) |
+| Tools (OAuth) | GitHub, Google Calendar (read+write), Notion (read) via AgentCore Identity 3LO |
 | Data | DynamoDB (sessions, GSI byUser) |
 | IaC | Terraform (custom infra) + AgentCore CLI (runtime) |
 
@@ -39,11 +42,17 @@ User → CloudFront (CDN) → S3 (React SPA)
 ├── backend/           # Lambda handler (Node.js, SSE streaming proxy)
 ├── serverlessstrands/ # AgentCore project (Strands agent + memory + gateway)
 │   ├── app/MainAgent/ # Python agent code
+│   │   ├── oauth_tools/  # GitHub, Google Calendar, Notion tools (3LO OAuth)
+│   │   └── mcp_client/   # AgentCore Gateway MCP client
 │   └── agentcore/     # agentcore.json, aws-targets.json
+├── tools/             # Gateway Lambda tool targets
+│   ├── finance/       # Yahoo Finance (yfinance)
+│   └── tavily/        # Tavily web search (Secrets Manager key)
 ├── infra/             # Terraform modules
 │   ├── modules/
-│   │   ├── backend/   # ECR + Lambda + Function URL
+│   │   ├── backend/   # ECR + Lambda + Function URL + IAM (AgentCore + OAuth)
 │   │   ├── data/      # DynamoDB
+│   │   ├── tool-lambda/ # Reusable module for Gateway tool Lambdas
 │   │   └── web/       # S3 + CloudFront
 │   └── envs/dev/      # Dev environment
 └── scripts/           # deploy.sh, post_deploy.py (IAM patcher)
@@ -102,23 +111,29 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*" --pr
 - [x] Cross-session memory (STM + LTM with 3 strategies)
 - [x] Session list with recency grouping (today/yesterday/last 7d/older)
 - [x] Editorial dark UI (Instrument Serif + Inter Tight + JetBrains Mono)
-- [x] AgentCore Gateway + Tavily Search tool
-- [x] Tool use badges (shows which tools were invoked per message)
+- [x] AgentCore Gateway — Yahoo Finance (Lambda target), Tavily Search (Lambda target)
+- [x] AgentCore Identity 3LO — GitHub, Google Calendar (full read+write, 10 tools), Notion (read)
+- [x] Tavily Lambda workaround for Gateway Integration bug (ap-northeast-2)
+- [x] Reusable `tool-lambda` Terraform module (ECR + Docker + Lambda + IAM)
+- [x] Tool use badges with SVG/PNG icons per tool
 - [x] Markdown rendering in assistant responses
 - [x] IAM auto-patcher (post_deploy.py) for AgentCore CDK permission gaps
+- [x] `google_calendar_date_info` utility tool (date/day-of-week without external API)
 
 ## TODO
 
 - [ ] User Auth (Cognito) — replace localStorage userId
-- [ ] Frontend S3 deploy + CloudFront invalidation (CI/CD)
 - [ ] Telegram bot integration (second channel)
-- [ ] More MCP tools (Brave Search, custom Lambda tools)
+- [ ] Gmail OAuth tool (AgentCore Identity 3LO)
+- [ ] MS Office tools (OneDrive, Outlook)
 - [ ] Specialized Agents via A2A (Deep Research, Code Agent)
-- [ ] AgentCore Identity + 3LO (Gmail, Calendar, GitHub, Notion)
 - [ ] AgentCore Observability setup
-- [ ] Code Interpreter / Browser sandboxed tools
+- [ ] Code Interpreter tool (sandboxed execution)
+- [ ] Browser tool (AgentCore Browser + Nova Act)
 - [ ] Speech model integration
+- [ ] More public API tools (weather, news, etc.)
 - [ ] Production hardening (rate limiting, error monitoring, WAF)
+- [ ] CI/CD pipeline (frontend deploy + backend image build)
 
 ## Known Gotchas
 
@@ -127,6 +142,8 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*" --pr
 3. **AgentCore CDK auto-role** is missing `RetrieveMemoryRecords` — `post_deploy.py` patches this after every deploy
 4. **Python Lambda** does NOT support native response streaming — use Node.js with `awslambda.streamifyResponse()`
 5. **AgentCore `runtimeSessionId`** must be ≥33 chars (use full UUIDs)
+6. **AgentCore Gateway Integration targets** (openApiSchema) in ap-northeast-2 have a service bug — credential fetch count stays at 0, returns "An internal error occurred". Workaround: wrap API in Lambda, register as Lambda target
+7. **Gateway target type change** — cannot update from `openApiSchema` to `lambda`; must delete and recreate
 
 ## License
 

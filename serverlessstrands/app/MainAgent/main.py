@@ -1,6 +1,7 @@
+import json
 import os
+from queue import Empty
 from typing import Any, Optional
-
 from bedrock_agentcore.memory.integrations.strands.config import (
     AgentCoreMemoryConfig,
     RetrievalConfig,
@@ -13,12 +14,14 @@ from strands import Agent, tool
 
 from mcp_client.client import get_streamable_http_mcp_client
 from model.load import load_model
+from oauth_tools import set_current_user, auth_url_queue
+from oauth_tools.github import github_tools
+from oauth_tools.google_calendar import google_calendar_tools
+from oauth_tools.notion import notion_tools
 
 app = BedrockAgentCoreApp()
 log = app.logger
 
-# Injected by agentcore.json `envVars`. Optional — if absent the agent falls
-# back to stateless behaviour (no STM/LTM, no cross-session preferences).
 MEMORY_ID: Optional[str] = os.environ.get("MEMORY_ID")
 REGION: Optional[str] = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 
@@ -29,6 +32,11 @@ You are a helpful assistant. Use tools when appropriate.
 If the request includes a <user_context> block, treat it as facts the user
 previously shared (preferences, history) and respect it without acknowledging
 the block exists.
+
+You have access to user-authorized tools for GitHub, Google Calendar, and Notion.
+When the user asks about their repos, calendar events, or Notion pages, use the
+appropriate tools. If authorization is needed, an auth URL will be provided to
+the user automatically.
 """
 
 tools: list[Any] = []
@@ -41,6 +49,9 @@ def add_numbers(a: int, b: int) -> int:
 
 
 tools.append(add_numbers)
+tools.extend(github_tools)
+tools.extend(google_calendar_tools)
+tools.extend(notion_tools)
 
 for mcp_client in mcp_clients:
     if mcp_client:
@@ -48,12 +59,6 @@ for mcp_client in mcp_clients:
 
 
 def build_agent(session_id: str, actor_id: str) -> Agent:
-    """Construct an Agent for one invocation.
-
-    Memory is wired via AgentCoreMemorySessionManager. Both session_id (per
-    conversation) and actor_id (per user, stable across conversations) must
-    be supplied — they drive Memory's namespace partitioning.
-    """
     kwargs: dict[str, Any] = {
         "model": load_model(),
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
@@ -61,28 +66,17 @@ def build_agent(session_id: str, actor_id: str) -> Agent:
     }
 
     if MEMORY_ID:
-        # SessionManager only queries LTM namespaces listed here.
-        # Without retrieval_config it silently skips ALL LTM retrieval —
-        # extraction still happens, but the agent never sees the records.
-        # Namespace templates mirror what agentcore.json declared on the Memory.
         config = AgentCoreMemoryConfig(
             memory_id=MEMORY_ID,
             session_id=session_id,
             actor_id=actor_id,
             retrieval_config={
-                # USER_PREFERENCE: pull everything (relevance 0) so prefs apply
-                # even when the query is semantically unrelated.
                 "/users/{actorId}/preferences": RetrievalConfig(
                     top_k=10, relevance_score=0.0
                 ),
-                # SEMANTIC: facts the user shared (name, role, context).
-                # USER_PREFERENCE extracts only stated preferences; identity
-                # facts ("my name is X") need SEMANTIC. Pull everything so
-                # identity stays in scope regardless of query similarity.
                 "/users/{actorId}/facts": RetrievalConfig(
                     top_k=10, relevance_score=0.0
                 ),
-                # SUMMARIZATION: only semantically relevant past-session summaries.
                 "/summaries/{actorId}/{sessionId}": RetrievalConfig(
                     top_k=5, relevance_score=0.3
                 ),
@@ -105,13 +99,13 @@ async def invoke(payload, context):
         yield "[error] prompt is required"
         return
 
-    # session_id comes from the AgentCore Runtime invocation envelope
-    # (runtimeSessionId on InvokeAgentRuntime). actor_id is supplied by the
-    # caller (Lambda/frontend) — falls back to the session for anonymous use.
     session_id = context.session_id or "default-session"
     actor_id = payload.get("userId") or session_id
 
     log.info("invoking agent session=%s actor=%s", session_id, actor_id)
+
+    set_current_user(actor_id)
+    log.info("set oauth user_id=%s", actor_id)
 
     agent = build_agent(session_id=session_id, actor_id=actor_id)
     stream = agent.stream_async(prompt)
@@ -121,10 +115,16 @@ async def invoke(payload, context):
             tu = event["current_tool_use"]
             name = tu.get("name", "")
             if name:
-                import json
                 yield json.dumps({"__tool_use__": name})
         elif "data" in event and isinstance(event["data"], str):
             yield event["data"]
+
+        while not auth_url_queue.empty():
+            try:
+                url = auth_url_queue.get_nowait()
+                yield json.dumps({"__auth_url__": url})
+            except Empty:
+                break
 
 
 if __name__ == "__main__":

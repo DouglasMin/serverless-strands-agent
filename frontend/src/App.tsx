@@ -85,6 +85,20 @@ export default function App() {
                 setActiveId(ev.sessionId);
               }
               break;
+            case "auth_url":
+              window.open(ev.url, "_blank", "width=600,height=700");
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = {
+                    ...last,
+                    text: last.text + "\n\n🔐 Authorization required — a popup has opened. Please complete the sign-in.\n\n"
+                  };
+                }
+                return next;
+              });
+              break;
             case "tool_use":
               setMessages((prev) => {
                 const next = [...prev];
