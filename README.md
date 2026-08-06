@@ -13,9 +13,9 @@ User → CloudFront (CDN) → S3 (React SPA)
                    ┌─────────────────┼─────────────────┐
                    │                 │                  │
             Bedrock LLM     AgentCore Gateway    AgentCore Identity (3LO)
-                   │              │    │                │
-          AgentCore Memory   Yahoo   Tavily    ┌───────┼───────┐
-          (STM + LTM)       Finance  Search    │       │       │
+                   │          │       │    │            │
+          AgentCore Memory   Yahoo  Tavily Maps  ┌──────┼──────┐
+          (STM + LTM)       Finance Search       │      │      │
                                             GitHub  Google   Notion
                                                    Calendar
 ```
@@ -30,7 +30,7 @@ User → CloudFront (CDN) → S3 (React SPA)
 | Agent Runtime | AgentCore Runtime (Firecracker microVM) |
 | Agent Framework | Strands Agents (Python) |
 | Memory | AgentCore Memory (STM + LTM: Summarization, User Preference, Semantic) |
-| Tools (Gateway) | AgentCore Gateway → Yahoo Finance, Tavily Search (Lambda targets) |
+| Tools (Gateway) | AgentCore Gateway → Yahoo Finance, Tavily Search, Google Maps (Lambda targets) |
 | Tools (OAuth) | GitHub, Google Calendar (read+write), Notion (read) via AgentCore Identity 3LO |
 | Data | DynamoDB (sessions, GSI byUser) |
 | IaC | Terraform (custom infra) + AgentCore CLI (runtime) |
@@ -47,6 +47,7 @@ User → CloudFront (CDN) → S3 (React SPA)
 │   └── agentcore/     # agentcore.json, aws-targets.json
 ├── tools/             # Gateway Lambda tool targets
 │   ├── finance/       # Yahoo Finance (yfinance)
+│   ├── google-maps/   # Google Maps Platform route preview tools
 │   └── tavily/        # Tavily web search (Secrets Manager key)
 ├── infra/             # Terraform modules
 │   ├── modules/
@@ -105,14 +106,27 @@ aws s3 sync dist/ s3://<UI_BUCKET> --delete --profile developer-dongik
 aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*" --profile developer-dongik
 ```
 
+## AgentCore Inventory Audit
+
+The deployed AgentCore resources are partly managed outside Terraform and are guarded by a read-only inventory audit.
+
+```bash
+python3 scripts/audit_agentcore_resources.py --profile developer-dongik
+```
+
+Expected result: runtime, memory, Gateway targets, Identity providers, Code Interpreter, Browser, and log group checks pass. Registry currently reports an expected access warning because `list-registries` is not authorized for this profile.
+
+Details: `docs/agentcore-inventory.md`
+
 ## Features (Completed)
 
 - [x] Streaming chat (SSE) with AgentCore Runtime
 - [x] Cross-session memory (STM + LTM with 3 strategies)
 - [x] Session list with recency grouping (today/yesterday/last 7d/older)
 - [x] Editorial dark UI (Instrument Serif + Inter Tight + JetBrains Mono)
-- [x] AgentCore Gateway — Yahoo Finance (Lambda target), Tavily Search (Lambda target)
-- [x] AgentCore Identity 3LO — GitHub, Google Calendar (full read+write, 10 tools), Notion (read)
+- [x] AgentCore Gateway — Yahoo Finance, Tavily Search, Google Maps (Lambda targets)
+- [x] AgentCore Identity 3LO — GitHub, Google Calendar (full read+write), Notion (read)
+- [x] Google Mobility Assistant — Calendar event location, Maps route preview, reminder confirmation
 - [x] Tavily Lambda workaround for Gateway Integration bug (ap-northeast-2)
 - [x] Reusable `tool-lambda` Terraform module (ECR + Docker + Lambda + IAM)
 - [x] Tool use badges with SVG/PNG icons per tool
@@ -144,6 +158,7 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*" --pr
 5. **AgentCore `runtimeSessionId`** must be ≥33 chars (use full UUIDs)
 6. **AgentCore Gateway Integration targets** (openApiSchema) in ap-northeast-2 have a service bug — credential fetch count stays at 0, returns "An internal error occurred". Workaround: wrap API in Lambda, register as Lambda target
 7. **Gateway target type change** — cannot update from `openApiSchema` to `lambda`; must delete and recreate
+8. **Browser geolocation is per-request context** — location-bearing turns disable AgentCore Memory; do not store current location in Memory or DynamoDB unless product requirements change and user consent is explicit
 
 ## License
 

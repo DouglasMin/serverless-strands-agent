@@ -38,3 +38,13 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "google_maps_secret_id" {
+  description = "Secrets Manager secret name or full ARN containing JSON with api_key_value for Google Maps Platform."
+  type        = string
+}
+
+variable "google_maps_secret_arn_pattern" {
+  description = "Secrets Manager ARN pattern allowing GetSecretValue for the Google Maps API key secret."
+  type        = string
+}

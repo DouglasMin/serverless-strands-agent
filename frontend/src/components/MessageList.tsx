@@ -1,15 +1,23 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
-import type { ChatMessage, ToolUse } from "../lib/types";
+import type { ChatMessage, RoutePreview, ToolUse } from "../lib/types";
+import { RoutePreviewCard } from "./RoutePreviewCard";
 
 interface Props {
   messages: ChatMessage[];
   streaming: boolean;
   error: string | null;
   empty: boolean;
+  onSetReminder?: (preview: RoutePreview) => void;
 }
 
-export function MessageList({ messages, streaming, error, empty }: Props) {
+export function MessageList({
+  messages,
+  streaming,
+  error,
+  empty,
+  onSetReminder
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,6 +51,7 @@ export function MessageList({ messages, streaming, error, empty }: Props) {
             message={m}
             isLast={i === messages.length - 1}
             streaming={streaming}
+            onSetReminder={onSetReminder}
           />
         ))}
         {error && (
@@ -59,11 +68,13 @@ export function MessageList({ messages, streaming, error, empty }: Props) {
 function Message({
   message,
   isLast,
-  streaming
+  streaming,
+  onSetReminder
 }: {
   message: ChatMessage;
   isLast: boolean;
   streaming: boolean;
+  onSetReminder?: (preview: RoutePreview) => void;
 }) {
   const isStreamingThis = streaming && isLast && message.role === "assistant";
 
@@ -86,6 +97,17 @@ function Message({
       </div>
       {message.tools && message.tools.length > 0 && (
         <ToolBadges tools={message.tools} />
+      )}
+      {message.routePreviews && message.routePreviews.length > 0 && (
+        <div className="msg__route-previews">
+          {message.routePreviews.map((preview, idx) => (
+            <RoutePreviewCard
+              key={`${preview.destinationLabel}-${idx}`}
+              preview={preview}
+              onSetReminder={onSetReminder}
+            />
+          ))}
+        </div>
       )}
       <div className="msg__text">
         {message.text ? (
@@ -119,7 +141,13 @@ const TOOL_ICONS: Record<string, string> = {
   github_get_repo: "/tool-icons/github.svg",
   github_list_issues: "/tool-icons/github.svg",
   google_calendar_list_events: "/tool-icons/google-calendar.svg",
+  google_calendar_find_events_with_location: "/tool-icons/google-calendar.svg",
+  google_calendar_set_event_reminder: "/tool-icons/google-calendar.svg",
   google_calendar_today: "/tool-icons/google-calendar.svg",
+  google_maps_geocode: "/tool-icons/workspace.svg",
+  google_maps_place_search: "/tool-icons/workspace.svg",
+  google_maps_compute_route: "/tool-icons/workspace.svg",
+  google_maps_route_preview: "/tool-icons/workspace.svg",
   notion_search: "/tool-icons/notion.svg",
   notion_get_page: "/tool-icons/notion.svg",
 };

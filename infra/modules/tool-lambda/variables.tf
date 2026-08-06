@@ -32,6 +32,12 @@ variable "memory_size" {
   default     = 256
 }
 
+variable "environment_variables" {
+  description = "Environment variables passed to the tool Lambda."
+  type        = map(string)
+  default     = {}
+}
+
 variable "log_retention_days" {
   type    = number
   default = 14

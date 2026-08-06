@@ -1,10 +1,11 @@
 import urllib.request
 import urllib.parse
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from strands import tool
+from temporal_context import APP_TIMEZONE_NAME, local_now
 from oauth_tools import get_oauth_token, auth_url_queue
 
 PROVIDER_NAME = "google-calendar-provider"
@@ -63,11 +64,78 @@ def _format_event(ev: dict) -> dict:
         "status": ev.get("status"),
         "description": ev.get("description"),
         "htmlLink": ev.get("htmlLink"),
+        "reminders": ev.get("reminders"),
         "attendees": [
             {"email": a.get("email"), "status": a.get("responseStatus")}
             for a in ev.get("attendees", [])
         ] or None,
     }
+
+
+def _events_with_locations(events: list[dict]) -> list[dict]:
+    return [
+        _format_event(ev)
+        for ev in events
+        if str(ev.get("location") or "").strip()
+    ]
+
+
+def _calendar_window_params(
+    now: datetime | None = None,
+    days_ahead: int = 7,
+    max_results: int = 10,
+) -> dict[str, str]:
+    current = local_now(now)
+    bounded_days = min(max(days_ahead, 1), 366)
+    bounded_results = min(max(max_results, 1), 50)
+    return {
+        "timeMin": current.isoformat(),
+        "timeMax": (current + timedelta(days=bounded_days)).isoformat(),
+        "maxResults": str(bounded_results),
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "timeZone": APP_TIMEZONE_NAME,
+    }
+
+
+def _today_window_params(now: datetime | None = None) -> dict[str, str]:
+    current = local_now(now)
+    start_of_day = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = current.replace(hour=23, minute=59, second=59, microsecond=0)
+    return {
+        "timeMin": start_of_day.isoformat(),
+        "timeMax": end_of_day.isoformat(),
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "timeZone": APP_TIMEZONE_NAME,
+    }
+
+
+def _build_event_with_reminder(
+    existing: dict, minutes_before: int, method: str,
+) -> dict:
+    if method not in {"popup", "email"}:
+        raise ValueError("method must be 'popup' or 'email'")
+    if minutes_before < 0 or minutes_before > 40320:
+        raise ValueError("minutes_before must be between 0 and 40320")
+    existing_reminders = existing.get("reminders")
+    existing_overrides = []
+    if isinstance(existing_reminders, dict):
+        existing_overrides = existing_reminders.get("overrides") or []
+
+    overrides = [
+        dict(override)
+        for override in existing_overrides
+        if isinstance(override, dict) and override.get("method") != method
+    ]
+    overrides.append({"method": method, "minutes": minutes_before})
+
+    updated = dict(existing)
+    updated["reminders"] = {
+        "useDefault": False,
+        "overrides": overrides,
+    }
+    return updated
 
 
 # ── Utility Tools ────────────────────────────────────────────────────
@@ -149,20 +217,46 @@ def google_calendar_list_events(
     if not token:
         return "Failed to get Google Calendar token."
 
-    now = datetime.now(timezone.utc)
-    params: dict[str, str] = {
-        "timeMin": now.isoformat(),
-        "timeMax": (now + timedelta(days=days_ahead)).isoformat(),
-        "maxResults": str(min(max_results, 50)),
-        "singleEvents": "true",
-        "orderBy": "startTime",
-    }
+    params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
     if query:
         params["q"] = query
 
     data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
     results = [_format_event(ev) for ev in data.get("items", [])]
     return json.dumps(results, indent=2, ensure_ascii=False)
+
+
+@tool
+def google_calendar_find_events_with_location(
+    calendar_id: str = "primary",
+    days_ahead: int = 7,
+    max_results: int = 20,
+    query: str = "",
+) -> str:
+    """List upcoming events that have a non-empty location field.
+
+    Use this before route planning from Calendar events.
+    calendar_id: Calendar ID, use "primary" for main calendar.
+    days_ahead: Number of days ahead to inspect.
+    max_results: Maximum events to inspect, capped at 50.
+    query: Optional text search across event title, description, and location.
+    """
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        return "Failed to get Google Calendar token."
+
+    params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
+    if query:
+        params["q"] = query
+
+    data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
+    return json.dumps(
+        _events_with_locations(data.get("items", [])),
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @tool
@@ -174,17 +268,9 @@ def google_calendar_today(calendar_id: str = "primary") -> str:
     if not token:
         return "Failed to get Google Calendar token."
 
-    now = datetime.now(timezone.utc)
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
     data = _gcal_request(
         f"/calendars/{calendar_id}/events", token,
-        params={
-            "timeMin": start_of_day,
-            "timeMax": end_of_day,
-            "singleEvents": "true",
-            "orderBy": "startTime",
-        },
+        params=_today_window_params(),
     )
     results = [_format_event(ev) for ev in data.get("items", [])]
     if not results:
@@ -369,6 +455,41 @@ def google_calendar_update_event(
 
 
 @tool
+def google_calendar_set_event_reminder(
+    event_id: str,
+    minutes_before: int,
+    method: str = "popup",
+    calendar_id: str = "primary",
+) -> str:
+    """Set a single reminder on an existing Calendar event.
+
+    event_id: Event ID to update.
+    minutes_before: Number of minutes before event start.
+    method: "popup" or "email".
+    calendar_id: Calendar containing the event. Default "primary".
+    """
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        return "Failed to get Google Calendar token."
+
+    try:
+        existing = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
+        updated = _build_event_with_reminder(existing, minutes_before, method)
+    except ValueError as exc:
+        return str(exc)
+
+    result = _gcal_request(
+        f"/calendars/{calendar_id}/events/{event_id}",
+        token,
+        method="PUT",
+        body=updated,
+    )
+    return json.dumps({"updated": _format_event(result)}, indent=2, ensure_ascii=False)
+
+
+@tool
 def google_calendar_delete_event(
     event_id: str, calendar_id: str = "primary", notify: bool = False,
 ) -> str:
@@ -394,11 +515,13 @@ google_calendar_tools = [
     google_calendar_date_info,
     google_calendar_list_calendars,
     google_calendar_list_events,
+    google_calendar_find_events_with_location,
     google_calendar_today,
     google_calendar_get_event,
     google_calendar_check_availability,
     google_calendar_create_event,
     google_calendar_quick_add,
     google_calendar_update_event,
+    google_calendar_set_event_reminder,
     google_calendar_delete_event,
 ]

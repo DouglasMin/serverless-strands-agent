@@ -68,18 +68,18 @@ resource "null_resource" "build_and_push" {
       REPO_URL="${aws_ecr_repository.this.repository_url}"
       REGISTRY="$${REPO_URL%%/*}"
       TAG="${local.source_hash}"
+      export DOCKER_CONFIG="$$(mktemp -d)"
+      trap 'rm -rf "$$DOCKER_CONFIG"' EXIT
 
       echo "→ ECR login: $REGISTRY"
       aws ecr get-login-password --region "${var.region}" \
         | docker login --username AWS --password-stdin "$REGISTRY"
 
-      echo "→ docker buildx build (linux/arm64) → push $REPO_URL:$TAG"
-      docker buildx build \
-        --platform linux/arm64 \
-        --provenance=false \
+      echo "→ docker build → push $REPO_URL:$TAG"
+      docker build \
         -t "$REPO_URL:$TAG" \
-        --push \
         "${var.lambda_source_dir}"
+      docker push "$REPO_URL:$TAG"
     EOT
   }
 
@@ -121,6 +121,13 @@ resource "aws_lambda_function" "this" {
   architectures = ["arm64"]
   timeout       = var.timeout
   memory_size   = var.memory_size
+
+  dynamic "environment" {
+    for_each = length(var.environment_variables) > 0 ? [1] : []
+    content {
+      variables = var.environment_variables
+    }
+  }
 
   depends_on = [
     null_resource.build_and_push,

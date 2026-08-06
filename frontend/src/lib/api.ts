@@ -1,7 +1,9 @@
 import type {
   SessionDetail,
   SessionSummary,
-  StreamEvent
+  StreamEvent,
+  RoutePreview,
+  UserLocation
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -37,6 +39,7 @@ interface ChatOpts {
   sessionId: string | null;
   prompt: string;
   userId: string;
+  userLocation?: UserLocation | null;
   signal?: AbortSignal;
 }
 
@@ -44,12 +47,13 @@ export async function* streamChat({
   sessionId,
   prompt,
   userId,
+  userLocation,
   signal
 }: ChatOpts): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId, prompt, userId }),
+    body: JSON.stringify({ sessionId, prompt, userId, userLocation }),
     signal
   });
 
@@ -91,25 +95,38 @@ function parseFrame(frame: string): StreamEvent | null {
 
   switch (event) {
     case "session":
-      return { type: "session", sessionId: safeJson(body)?.sessionId ?? "" };
+      return { type: "session", sessionId: stringField(body, "sessionId") };
     case "delta":
-      return { type: "delta", text: safeJson(body)?.text ?? body };
+      return { type: "delta", text: stringField(body, "text", body) };
     case "tool_use":
-      return { type: "tool_use", name: safeJson(body)?.name ?? body };
+      return { type: "tool_use", name: stringField(body, "name", body) };
+    case "route_preview": {
+      const parsed = safeJson(body);
+      if (!parsed) return null;
+      return {
+        type: "route_preview",
+        preview: parsed as unknown as RoutePreview
+      };
+    }
     case "auth_url":
-      return { type: "auth_url", url: safeJson(body)?.url ?? body };
+      return { type: "auth_url", url: stringField(body, "url", body) };
     case "done":
-      return { type: "done", sessionId: safeJson(body)?.sessionId ?? "" };
+      return { type: "done", sessionId: stringField(body, "sessionId") };
     case "error":
-      return { type: "error", message: safeJson(body)?.message ?? body };
+      return { type: "error", message: stringField(body, "message", body) };
     case "warn":
-      return { type: "warn", message: safeJson(body)?.message ?? body };
+      return { type: "warn", message: stringField(body, "message", body) };
     default:
       return null;
   }
 }
 
-function safeJson(input: string): Record<string, string> | null {
+function stringField(input: string, key: string, fallback = ""): string {
+  const value = safeJson(input)?.[key];
+  return typeof value === "string" ? value : fallback;
+}
+
+function safeJson(input: string): Record<string, unknown> | null {
   try {
     return JSON.parse(input);
   } catch {
