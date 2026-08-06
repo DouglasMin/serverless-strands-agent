@@ -1,0 +1,98 @@
+{
+  "account": "612529367436",
+  "region": "ap-northeast-2",
+  "runtime": {
+    "name": "serverlessstrands_MainAgent-4l0O95618E",
+    "status": "READY",
+    "networkMode": "PUBLIC",
+    "requiredEnv": {
+      "MEMORY_ID": "serverlessstrands_ChatMemory-4Q3NbO5016",
+      "MEMORY_CHATMEMORY_ID": "serverlessstrands_ChatMemory-4Q3NbO5016",
+      "WORKLOAD_NAME": "serverlessstrands_MainAgent-4l0O95618E",
+      "OAUTH_CALLBACK_URL": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback",
+      "AGENTCORE_GATEWAY_MAINGATEWAY_AUTH_TYPE": "NONE",
+      "AGENTCORE_GATEWAY_MAINGATEWAY_URL": "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp"
+    }
+  },
+  "memory": {
+    "name": "serverlessstrands_ChatMemory-4Q3NbO5016",
+    "status": "ACTIVE",
+    "eventExpiryDuration": 30,
+    "strategies": {
+      "SEMANTIC": "/users/{actorId}/facts",
+      "USER_PREFERENCE": "/users/{actorId}/preferences",
+      "SUMMARIZATION": "/summaries/{actorId}/{sessionId}"
+    }
+  },
+  "gateway": {
+    "name": "serverlessstrands-MainGateway",
+    "status": "READY",
+    "url": "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp",
+    "authorizerType": "NONE",
+    "targets": {
+      "yahoo-finance": {
+        "status": "READY",
+        "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-finance",
+        "tools": [
+          "stock_quote",
+          "stock_history",
+          "stock_compare",
+          "financial_news",
+          "stock_analysis",
+          "options_chain"
+        ]
+      },
+      "tavily-lamdba-tool": {
+        "status": "READY",
+        "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-tavily",
+        "tools": [
+          "TavilySearchPost",
+          "TavilySearchExtract"
+        ]
+      },
+      "google-maps": {
+        "status": "READY",
+        "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-google-maps",
+        "tools": [
+          "google_maps_geocode",
+          "google_maps_place_search",
+          "google_maps_compute_route",
+          "google_maps_route_preview"
+        ]
+      }
+    }
+  },
+  "identity": {
+    "oauthProviders": {
+      "github-provider": "READY",
+      "google-calendar-provider": "READY",
+      "notion-provider": "READY"
+    },
+    "apiKeyProviders": {
+      "tavily_api_key": "MANAGED"
+    },
+    "workloadIdentity": "serverlessstrands_MainAgent-4l0O95618E",
+    "allowedReturnUrl": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback",
+    "tokenVault": {
+      "id": "default",
+      "keyType": "ServiceManagedKey"
+    }
+  },
+  "sandbox": {
+    "codeInterpreter": {
+      "name": "serverless_strands_code_interpreter",
+      "status": "READY"
+    },
+    "browser": {
+      "name": "serverless_strands_agent_broswer_tool",
+      "status": "READY"
+    }
+  },
+  "registry": {
+    "status": "UNVERIFIED_ACCESS_DENIED"
+  },
+  "observability": {
+    "runtimeLogGroup": "/aws/bedrock-agentcore/runtimes/serverlessstrands_MainAgent-4l0O95618E-DEFAULT",
+    "onlineEvaluationConfigs": []
+  }
+}

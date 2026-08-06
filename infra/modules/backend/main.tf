@@ -74,18 +74,18 @@ resource "null_resource" "build_and_push" {
       REPO_URL="${aws_ecr_repository.lambda.repository_url}"
       REGISTRY="$${REPO_URL%%/*}"
       TAG="${local.source_hash}"
+      export DOCKER_CONFIG="$$(mktemp -d)"
+      trap 'rm -rf "$$DOCKER_CONFIG"' EXIT
 
       echo "→ ECR login: $REGISTRY"
       aws ecr get-login-password --region "${var.region}" \
         | docker login --username AWS --password-stdin "$REGISTRY"
 
-      echo "→ docker buildx build (linux/arm64) → push $REPO_URL:$TAG"
-      docker buildx build \
-        --platform linux/arm64 \
-        --provenance=false \
+      echo "→ docker build → push $REPO_URL:$TAG"
+      docker build \
         -t "$REPO_URL:$TAG" \
-        --push \
         "${var.lambda_source_dir}"
+      docker push "$REPO_URL:$TAG"
     EOT
   }
 
@@ -164,8 +164,8 @@ resource "aws_iam_role_policy" "agentcore" {
         Resource = ["*"]
       },
       {
-        Effect = "Allow"
-        Action = "secretsmanager:GetSecretValue"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
         Resource = "arn:aws:secretsmanager:ap-northeast-2:612529367436:secret:bedrock-agentcore-identity!default/oauth2/*"
       }
     ]
@@ -212,7 +212,7 @@ resource "aws_lambda_function_url" "chat" {
   invoke_mode        = "RESPONSE_STREAM"
 
   cors {
-    allow_origins  = ["*"] # Tighten at the CloudFront layer
+    allow_origins  = ["*"]           # Tighten at the CloudFront layer
     allow_methods  = ["POST", "GET"] # OPTIONS is auto-handled; declaring it fails Lambda's 6-char member limit
     allow_headers  = ["content-type"]
     expose_headers = ["content-type"]
@@ -242,4 +242,3 @@ resource "aws_lambda_permission" "function_invoke_public" {
   function_name = aws_lambda_function.chat.function_name
   principal     = "*"
 }
-

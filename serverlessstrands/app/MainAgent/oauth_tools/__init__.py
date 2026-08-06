@@ -3,25 +3,54 @@
 import logging
 import os
 import queue
-import threading
+from contextvars import ContextVar, Token
 from typing import Optional
 
 from bedrock_agentcore.services.identity import IdentityClient
 from bedrock_agentcore.runtime import BedrockAgentCoreContext
 
-auth_url_queue: queue.Queue[str] = queue.Queue()
-
 logger = logging.getLogger(__name__)
 
-_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "ap-northeast-2"
+_REGION = (
+    os.environ.get("AWS_REGION")
+    or os.environ.get("AWS_DEFAULT_REGION")
+    or "ap-northeast-2"
+)
 _CALLBACK_URL = os.environ.get(
     "OAUTH_CALLBACK_URL", "https://d1rur2clzx2nyl.cloudfront.net/auth/callback"
 )
-_WORKLOAD_NAME = os.environ.get("WORKLOAD_NAME", "serverlessstrands_MainAgent-4l0O95618E")
+_WORKLOAD_NAME = os.environ.get(
+    "WORKLOAD_NAME",
+    "serverlessstrands_MainAgent-4l0O95618E",
+)
 
 _identity_client: Optional[IdentityClient] = None
-_current_user_id: Optional[str] = None
-_token_lock = threading.Lock()
+_current_user_id: ContextVar[str | None] = ContextVar(
+    "current_oauth_user_id",
+    default=None,
+)
+_auth_url_queue: ContextVar[queue.Queue[str] | None] = ContextVar(
+    "auth_url_queue",
+    default=None,
+)
+_fallback_auth_url_queue: queue.Queue[str] = queue.Queue()
+
+
+class AuthUrlQueue:
+    def _queue(self) -> queue.Queue[str]:
+        return _auth_url_queue.get() or _fallback_auth_url_queue
+
+    def put_nowait(self, auth_url: str) -> None:
+        self._queue().put_nowait(auth_url)
+
+    def get_nowait(self) -> str:
+        return self._queue().get_nowait()
+
+    def empty(self) -> bool:
+        return self._queue().empty()
+
+
+auth_url_queue = AuthUrlQueue()
 
 
 def _get_identity_client() -> IdentityClient:
@@ -31,11 +60,21 @@ def _get_identity_client() -> IdentityClient:
     return _identity_client
 
 
-def set_current_user(user_id: str) -> None:
+def set_current_user(user_id: str) -> Token:
     """Called from entrypoint to set the current user for token retrieval."""
-    global _current_user_id
-    with _token_lock:
-        _current_user_id = user_id
+    return _current_user_id.set(user_id)
+
+
+def reset_current_user(token: Token) -> None:
+    _current_user_id.reset(token)
+
+
+def set_auth_url_queue(url_queue: queue.Queue[str]) -> Token:
+    return _auth_url_queue.set(url_queue)
+
+
+def reset_auth_url_queue(token: Token) -> None:
+    _auth_url_queue.reset(token)
 
 
 def _get_workload_token() -> Optional[str]:
@@ -44,9 +83,7 @@ def _get_workload_token() -> Optional[str]:
     if token:
         return token
 
-    with _token_lock:
-        user_id = _current_user_id
-
+    user_id = _current_user_id.get()
     if not user_id:
         logger.error("[OAuth] No user_id available for workload token generation")
         return None

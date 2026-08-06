@@ -57,6 +57,21 @@ module "tool_tavily" {
   memory_size       = 256
 }
 
+module "tool_google_maps" {
+  source = "../../modules/tool-lambda"
+
+  name_prefix       = local.name_prefix
+  tool_name         = "google-maps"
+  region            = var.region
+  aws_profile       = var.aws_profile
+  lambda_source_dir = "${path.module}/../../../tools/google-maps"
+  timeout           = 30
+  memory_size       = 256
+  environment_variables = {
+    GOOGLE_MAPS_SECRET_ARN = var.google_maps_secret_id
+  }
+}
+
 resource "aws_iam_role_policy" "tavily_secrets" {
   name = "secrets-read"
   role = module.tool_tavily.lambda_role_name
@@ -67,6 +82,20 @@ resource "aws_iam_role_policy" "tavily_secrets" {
       Effect   = "Allow"
       Action   = "secretsmanager:GetSecretValue"
       Resource = "arn:aws:secretsmanager:ap-northeast-2:612529367436:secret:bedrock-agentcore-identity!default/apikey/tavily_api_key*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "google_maps_secrets" {
+  name = "secrets-read"
+  role = module.tool_google_maps.lambda_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "secretsmanager:GetSecretValue"
+      Resource = var.google_maps_secret_arn_pattern
     }]
   })
 }

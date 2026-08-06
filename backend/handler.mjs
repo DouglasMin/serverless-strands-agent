@@ -58,8 +58,34 @@ const parseBody = (event) => {
   return JSON.parse(raw);
 };
 
-async function appendMessage(sessionId, userId, role, content) {
+const optionalFiniteNumber = (value) => {
+  if (value == null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const parseUserLocation = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const lat = Number(value.lat);
+  const lng = Number(value.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+
+  const location = { lat, lng };
+  const accuracy = optionalFiniteNumber(value.accuracy);
+  const capturedAt = optionalFiniteNumber(value.capturedAt);
+  if (accuracy !== undefined) location.accuracy = accuracy;
+  if (capturedAt !== undefined) location.capturedAt = capturedAt;
+  return location;
+};
+
+async function appendMessage(sessionId, userId, role, content, extra = {}) {
   const t = nowEpoch();
+  const message = { role, content, ts: t };
+  if (Array.isArray(extra.routePreviews) && extra.routePreviews.length > 0) {
+    message.routePreviews = extra.routePreviews;
+  }
+
   const expr = [
     "messages = list_append(if_not_exists(messages, :empty), :msg)",
     "updatedAt = :now",
@@ -70,7 +96,7 @@ async function appendMessage(sessionId, userId, role, content) {
   const names = { "#ttl": "ttl" };
   const values = {
     ":empty": [],
-    ":msg": [{ role, content, ts: t }],
+    ":msg": [message],
     ":now": t,
     ":uid": userId,
     ":ttl": t + TTL_DAYS * 86400
@@ -117,6 +143,7 @@ async function handleChat(event, responseStream) {
 
   const sessionId = body.sessionId ?? randomUUID();
   const userId = body.userId ?? sessionId;
+  const userLocation = parseUserLocation(body.userLocation);
   writeFrame("session", { sessionId });
 
   try {
@@ -127,12 +154,13 @@ async function handleChat(event, responseStream) {
   }
 
   let assistantText = "";
+  const routePreviews = [];
   try {
     const command = new InvokeAgentRuntimeCommand({
       agentRuntimeArn: AGENT_RUNTIME_ARN,
       runtimeSessionId: sessionId,
       qualifier: "DEFAULT",
-      payload: new TextEncoder().encode(JSON.stringify({ prompt, userId }))
+      payload: new TextEncoder().encode(JSON.stringify({ prompt, userId, userLocation }))
     });
     command.middlewareStack.add(
       (next) => (args) => {
@@ -167,15 +195,24 @@ async function handleChat(event, responseStream) {
                 writeFrame("auth_url", { url: inner.__auth_url__ });
                 continue;
               }
+              if (inner && typeof inner === "object" && inner.__route_preview__) {
+                routePreviews.push(inner.__route_preview__);
+                writeFrame("route_preview", inner.__route_preview__);
+                continue;
+              }
             } catch {
               // not inner JSON — it's plain text
             }
             text = outer;
-          } else if (typeof outer === "object" && outer.__tool_use__) {
+          } else if (outer && typeof outer === "object" && outer.__tool_use__) {
             writeFrame("tool_use", { name: outer.__tool_use__ });
             continue;
-          } else if (typeof outer === "object" && outer.__auth_url__) {
+          } else if (outer && typeof outer === "object" && outer.__auth_url__) {
             writeFrame("auth_url", { url: outer.__auth_url__ });
+            continue;
+          } else if (outer && typeof outer === "object" && outer.__route_preview__) {
+            routePreviews.push(outer.__route_preview__);
+            writeFrame("route_preview", outer.__route_preview__);
             continue;
           } else {
             text = JSON.stringify(outer);
@@ -206,7 +243,9 @@ async function handleChat(event, responseStream) {
 
   if (assistantText) {
     try {
-      await appendMessage(sessionId, userId, "assistant", assistantText);
+      await appendMessage(sessionId, userId, "assistant", assistantText, {
+        routePreviews
+      });
     } catch (err) {
       writeFrame("warn", { message: `DDB persist failed: ${err?.message ?? err}` });
     }

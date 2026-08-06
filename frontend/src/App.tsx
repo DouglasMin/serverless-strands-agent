@@ -4,7 +4,13 @@ import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
 import { fetchSession, fetchSessions, streamChat } from "./lib/api";
-import type { ChatMessage, SessionSummary } from "./lib/types";
+import { getCurrentLocation, promptLikelyNeedsLocation } from "./lib/geolocation";
+import type {
+  ChatMessage,
+  RoutePreview,
+  SessionSummary,
+  UserLocation
+} from "./lib/types";
 import { getUserId } from "./lib/user";
 import "./App.css";
 
@@ -43,7 +49,11 @@ export default function App() {
       try {
         const detail = await fetchSession(sessionId, userId);
         setMessages(
-          detail.messages.map((m) => ({ role: m.role, text: m.content }))
+          detail.messages.map((m) => ({
+            role: m.role,
+            text: m.content,
+            routePreviews: m.routePreviews
+          }))
         );
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -73,10 +83,20 @@ export default function App() {
       let capturedSessionId = activeId;
 
       try {
+        let userLocation: UserLocation | null = null;
+        if (promptLikelyNeedsLocation(prompt)) {
+          try {
+            userLocation = await getCurrentLocation();
+          } catch (err) {
+            console.warn("geolocation unavailable:", err);
+          }
+        }
+
         for await (const ev of streamChat({
           sessionId: activeId,
           prompt,
-          userId
+          userId,
+          userLocation
         })) {
           switch (ev.type) {
             case "session":
@@ -93,7 +113,7 @@ export default function App() {
                 if (last?.role === "assistant") {
                   next[next.length - 1] = {
                     ...last,
-                    text: last.text + "\n\n🔐 Authorization required — a popup has opened. Please complete the sign-in.\n\n"
+                    text: last.text + "\n\nAuthorization required - a popup has opened. Please complete the sign-in.\n\n"
                   };
                 }
                 return next;
@@ -123,6 +143,19 @@ export default function App() {
                 return next;
               });
               break;
+            case "route_preview":
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = {
+                    ...last,
+                    routePreviews: [...(last.routePreviews ?? []), ev.preview]
+                  };
+                }
+                return next;
+              });
+              break;
             case "warn":
               console.warn(ev.message);
               break;
@@ -145,6 +178,20 @@ export default function App() {
       }
     },
     [activeId, streaming, userId, refreshSessions]
+  );
+
+  const setReminderFromPreview = useCallback(
+    (preview: RoutePreview) => {
+      if (!preview.eventId) return;
+      const minutes =
+        preview.minutesBefore ??
+        Math.max(10, Math.ceil((preview.durationSeconds ?? 1800) / 60) + 10);
+      const calendarId = preview.calendarId ?? "primary";
+      void send(
+        `Set a popup reminder ${minutes} minutes before calendar event ${preview.eventId} on calendar ${calendarId}.`
+      );
+    },
+    [send]
   );
 
   const activeSession = sessions.find((s) => s.sessionId === activeId);
@@ -172,6 +219,7 @@ export default function App() {
           streaming={streaming}
           error={error}
           empty={!activeId && messages.length === 0}
+          onSetReminder={setReminderFromPreview}
         />
         <Composer onSend={send} disabled={streaming} />
       </main>
