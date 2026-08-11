@@ -34,13 +34,13 @@ export function Composer({ onSend, disabled }: Props) {
     <div className="composer">
       <div className="composer__shell">
         <span className="composer__prefix mono" aria-hidden>
-          ›
+          ▸
         </span>
         <textarea
           ref={ref}
           className="composer__input"
           value={text}
-          placeholder="ask anything…"
+          placeholder="Message atelier…"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -58,11 +58,19 @@ export function Composer({ onSend, disabled }: Props) {
           disabled={disabled || !text.trim()}
           aria-label="send message"
         >
-          <span aria-hidden>{disabled ? "…" : "↵"}</span>
+          <span
+            key={disabled ? "waiting" : "ready"}
+            className="composer__send-icon"
+            aria-hidden
+          >
+            {disabled ? "…" : "↵"}
+          </span>
         </button>
       </div>
-      <div className="composer__hint mono">
-        <kbd>enter</kbd> to send · <kbd>shift</kbd> + <kbd>enter</kbd> for newline
+      <div className="composer__hint">
+        <kbd className="mono">Enter</kbd> to send ·{" "}
+        <kbd className="mono">Shift</kbd> + <kbd className="mono">Enter</kbd> for
+        newline
       </div>
     </div>
   );

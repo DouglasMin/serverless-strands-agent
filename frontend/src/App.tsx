@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
@@ -14,6 +14,8 @@ import type {
 import { getUserId } from "./lib/user";
 import "./App.css";
 
+const isNarrow = () => window.matchMedia("(max-width: 768px)").matches;
+
 export default function App() {
   const [userId] = useState(() => getUserId());
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -22,7 +24,12 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On narrow screens the sidebar is an overlay — start it out of the way.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
+  // True while a different transcript is being fetched — drives the crossfade.
+  const [swapping, setSwapping] = useState(false);
+  // Guards against a slow fetch landing after a newer one (or a new chat).
+  const loadSeq = useRef(0);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -43,11 +50,17 @@ export default function App() {
   const openSession = useCallback(
     async (sessionId: string) => {
       if (streaming) return;
+      const seq = ++loadSeq.current;
       setActiveId(sessionId);
-      setMessages([]);
       setError(null);
+      if (isNarrow()) setSidebarOpen(false);
+      // Deliberately NOT clearing messages here. Emptying the column before
+      // the fetch resolves flashes a blank panel for the whole round-trip;
+      // the outgoing transcript stays put and fades out instead.
+      setSwapping(true);
       try {
         const detail = await fetchSession(sessionId, userId);
+        if (seq !== loadSeq.current) return;
         setMessages(
           detail.messages.map((m) => ({
             role: m.role,
@@ -56,7 +69,11 @@ export default function App() {
           }))
         );
       } catch (err) {
+        if (seq !== loadSeq.current) return;
+        setMessages([]);
         setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (seq === loadSeq.current) setSwapping(false);
       }
     },
     [streaming, userId]
@@ -64,14 +81,34 @@ export default function App() {
 
   const startNewChat = useCallback(() => {
     if (streaming) return;
+    // Bump the sequence so an in-flight session fetch can't repopulate
+    // the transcript we just cleared.
+    loadSeq.current += 1;
     setActiveId(null);
     setMessages([]);
+    setSwapping(false);
     setError(null);
+    if (isNarrow()) setSidebarOpen(false);
   }, [streaming]);
+
+  // ⌘K / Ctrl+K starts a new chat. Deliberately unanimated — a shortcut
+  // used this often should feel instant, not staged.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      startNewChat();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [startNewChat]);
 
   const send = useCallback(
     async (prompt: string) => {
       if (streaming) return;
+      // A session fetch still in flight must not overwrite what we stream.
+      loadSeq.current += 1;
+      setSwapping(false);
       setError(null);
       setMessages((prev) => [
         ...prev,
@@ -195,7 +232,7 @@ export default function App() {
   );
 
   const activeSession = sessions.find((s) => s.sessionId === activeId);
-  const headerTitle = activeSession?.title?.trim() || "untitled";
+  const headerTitle = activeSession?.title?.trim() || "Untitled";
 
   return (
     <div className="app" data-sidebar={sidebarOpen ? "open" : "closed"}>
@@ -207,6 +244,7 @@ export default function App() {
         onNew={startNewChat}
         onToggle={() => setSidebarOpen((o) => !o)}
       />
+      <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden />
       <main className="main">
         <Header
           title={headerTitle}
@@ -219,7 +257,9 @@ export default function App() {
           streaming={streaming}
           error={error}
           empty={!activeId && messages.length === 0}
+          swapping={swapping}
           onSetReminder={setReminderFromPreview}
+          onSuggest={send}
         />
         <Composer onSend={send} disabled={streaming} />
       </main>

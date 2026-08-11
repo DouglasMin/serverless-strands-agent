@@ -1,14 +1,37 @@
-import { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatMessage, RoutePreview, ToolUse } from "../lib/types";
 import { RoutePreviewCard } from "./RoutePreviewCard";
+
+// Tables must scroll inside their own box — a wide quote table should never
+// force the whole transcript to scroll sideways.
+const MD_COMPONENTS = {
+  table: (props: React.ComponentPropsWithoutRef<"table">) => (
+    <div className="md-table">
+      <table {...props} />
+    </div>
+  ),
+  a: (props: React.ComponentPropsWithoutRef<"a">) => (
+    <a {...props} target="_blank" rel="noreferrer noopener" />
+  )
+};
+
+const SUGGESTIONS = [
+  "What's on my calendar today?",
+  "Route to my next meeting",
+  "How did NVDA close today?",
+  "Search the news on AI chips"
+];
 
 interface Props {
   messages: ChatMessage[];
   streaming: boolean;
   error: string | null;
   empty: boolean;
+  swapping?: boolean;
   onSetReminder?: (preview: RoutePreview) => void;
+  onSuggest?: (text: string) => void;
 }
 
 export function MessageList({
@@ -16,51 +39,113 @@ export function MessageList({
   streaming,
   error,
   empty,
-  onSetReminder
+  swapping,
+  onSetReminder,
+  onSuggest
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Ref drives the scroll effect (no re-render per scroll event); the state
+  // mirror drives the pill, and only updates when the value actually flips.
+  const pinnedRef = useRef(true);
+  const [pinned, setPinned] = useState(true);
+
+  // Once the user scrolls up mid-stream, stop yanking them back down.
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const next = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (next === pinnedRef.current) return;
+    pinnedRef.current = next;
+    setPinned(next);
+  };
+
+  const jumpToLatest = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = true;
+    setPinned(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  };
+
+  // A transcript swap always lands at the bottom, whatever the reading
+  // position was in the conversation we just left.
+  useEffect(() => {
+    if (!swapping) return;
+    pinnedRef.current = true;
+    setPinned(true);
+  }, [swapping]);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    if (!el || !pinnedRef.current) return;
+    // Smooth scrolling restarts its own animation on every token, which
+    // reads as jitter. Stick instantly while streaming, glide otherwise.
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: streaming ? "auto" : "smooth"
+    });
   }, [messages, streaming]);
 
   if (empty && messages.length === 0) {
     return (
-      <div className="messages messages--empty" ref={scrollRef}>
-        <div className="empty">
-          <h2 className="empty__title">
-            <span className="empty__title-text">untitled</span>
-            <span className="empty__cursor">_</span>
-          </h2>
-          <p className="empty__hint mono">
-            send a message below to begin a new conversation.
-          </p>
+      <div className="messages-region">
+        <div className="messages messages--empty" ref={scrollRef}>
+          <div className="empty">
+            <span className="mark empty__mark" aria-hidden>
+              ◆
+            </span>
+            <h2 className="empty__title">What can I help with?</h2>
+            <p className="empty__hint">
+              Ask anything, or start with one of these.
+            </p>
+            <div className="empty__suggestions">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  className="empty__suggestion"
+                  onClick={() => onSuggest?.(s)}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="messages" ref={scrollRef}>
-      <div className="messages__inner">
-        {messages.map((m, i) => (
-          <Message
-            key={i}
-            message={m}
-            isLast={i === messages.length - 1}
-            streaming={streaming}
-            onSetReminder={onSetReminder}
-          />
-        ))}
-        {error && (
-          <div className="error">
-            <span className="mono error__mark">!</span>
-            <span>{error}</span>
-          </div>
-        )}
+    <div className="messages-region">
+      <div className="messages" ref={scrollRef} onScroll={onScroll}>
+        <div className="messages__inner" data-swapping={swapping ? "true" : "false"}>
+          {messages.map((m, i) => (
+            <Message
+              key={i}
+              message={m}
+              isLast={i === messages.length - 1}
+              streaming={streaming}
+              onSetReminder={onSetReminder}
+            />
+          ))}
+          {error && (
+            <div className="error">
+              <span className="mono error__mark">!</span>
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
       </div>
+      <button
+        className="jump-latest"
+        data-hidden={pinned || messages.length === 0 ? "true" : "false"}
+        onClick={jumpToLatest}
+        tabIndex={pinned ? -1 : 0}
+        aria-hidden={pinned}
+      >
+        <span aria-hidden>↓</span>
+        <span>Jump to latest</span>
+      </button>
     </div>
   );
 }
@@ -82,7 +167,6 @@ function Message({
     return (
       <div className="msg msg--user">
         <div className="msg__card">
-          <span className="msg__role mono">you</span>
           <div className="msg__text">{message.text}</div>
         </div>
       </div>
@@ -90,10 +174,12 @@ function Message({
   }
 
   return (
-    <div className="msg msg--assistant">
+    <div className="msg msg--assistant" data-streaming={isStreamingThis}>
       <div className="msg__head">
-        <span className="msg__mark serif">¶</span>
-        <span className="msg__role mono">atelier</span>
+        <span className="mark" aria-hidden>
+          ◆
+        </span>
+        <span className="msg__role">atelier</span>
       </div>
       {message.tools && message.tools.length > 0 && (
         <ToolBadges tools={message.tools} />
@@ -109,18 +195,21 @@ function Message({
           ))}
         </div>
       )}
+      {/* Keyed so the Thinking→answer handover remounts and blurs in,
+          rather than swapping in a single frame. */}
       <div className="msg__text">
         {message.text ? (
-          <>
-            <Markdown>{message.text}</Markdown>
-            {isStreamingThis && (
-              <span className="msg__cursor" aria-hidden>
-                ▌
-              </span>
-            )}
-          </>
+          <div key="body" className="msg__phase">
+            <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+              {message.text}
+            </Markdown>
+          </div>
         ) : (
-          isStreamingThis && <span className="msg__dim">thinking…</span>
+          isStreamingThis && (
+            <div key="thinking" className="msg__phase msg__dim">
+              Thinking…
+            </div>
+          )
         )}
       </div>
     </div>

@@ -14,15 +14,19 @@ export function Header({ title, isNew, sidebarOpen, onToggleSidebar }: Props) {
           onClick={onToggleSidebar}
           aria-label="open sidebar"
         >
-          <span className="mono">≡</span>
+          <span aria-hidden>☰</span>
         </button>
       )}
       <h1 className="header__title">
-        {isNew ? (
-          <span className="header__placeholder">new conversation</span>
-        ) : (
-          title
-        )}
+        {/* Keyed so a session switch remounts the label and blurs it in. */}
+        <span
+          key={isNew ? "__new__" : title}
+          className={
+            "header__title-text" + (isNew ? " header__placeholder" : "")
+          }
+        >
+          {isNew ? "New conversation" : title}
+        </span>
       </h1>
     </header>
   );
