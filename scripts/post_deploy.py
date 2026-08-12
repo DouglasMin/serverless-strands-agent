@@ -10,6 +10,9 @@ Why this exists:
 What it patches (all idempotent — put_role_policy overwrites):
   - bedrock-agentcore:RetrieveMemoryRecords + related read APIs on every
     Memory resource for every agent runtime in the project.
+  - secretsmanager:GetSecretValue on the Langfuse tracing secret, which
+    otel_bootstrap.py reads at container start to configure OTLP export.
+    Without it the agent still runs, but emits no traces.
 
 How to run:
   cd <project-root>/serverlessstrands && python ../scripts/post_deploy.py
@@ -27,6 +30,10 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 POLICY_NAME = "AgentCorePostDeployFixups"
+
+# Must match LANGFUSE_SECRET_ID in agentcore.json. Secrets Manager appends a
+# random 6-char suffix to the ARN, hence the trailing wildcard.
+LANGFUSE_SECRET_NAME = "serverlessstrands/langfuse"
 
 MEMORY_ACTIONS = [
     "bedrock-agentcore:RetrieveMemoryRecords",
@@ -88,8 +95,14 @@ def collect_agent_roles(region: str, agent_runtime_arns: list[str]) -> dict[str,
     return roles
 
 
-def patch_memory_access(role_arn: str, memory_arns: list[str]) -> None:
-    """Attach an inline policy granting Memory access. Idempotent."""
+def langfuse_secret_arn(region: str) -> str:
+    """Build the wildcard ARN for the Langfuse tracing secret."""
+    account = boto3.client("sts").get_caller_identity()["Account"]
+    return f"arn:aws:secretsmanager:{region}:{account}:secret:{LANGFUSE_SECRET_NAME}-*"
+
+
+def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None:
+    """Attach an inline policy granting Memory + tracing-secret access. Idempotent."""
     iam = boto3.client("iam")
     role_name = role_name_from_arn(role_arn)
 
@@ -106,7 +119,13 @@ def patch_memory_access(role_arn: str, memory_arns: list[str]) -> None:
                 "Effect": "Allow",
                 "Action": MEMORY_ACTIONS,
                 "Resource": resources,
-            }
+            },
+            {
+                "Sid": "LangfuseTracingSecretRead",
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": langfuse_secret_arn(region),
+            },
         ],
     }
 
@@ -159,7 +178,7 @@ def main() -> int:
     print("→ Patching IAM (idempotent)...")
     for runtime_arn, role_arn in roles.items():
         try:
-            patch_memory_access(role_arn, memory_arns)
+            patch_agent_role(role_arn, memory_arns, region)
         except (BotoCoreError, ClientError) as exc:
             sys.stderr.write(f"  ! failed to patch {role_arn}: {exc}\n")
             return 4

@@ -18,9 +18,59 @@ permissions the runtime actually needs**. The bugs found so far:
 | Missing permission | Symptom | Fix |
 | --- | --- | --- |
 | `bedrock-agentcore:RetrieveMemoryRecords` on Memory resources | Memory extraction works, but the agent never sees stored preferences. Only visible as `WARN ... AccessDeniedException` in CloudWatch. | `post_deploy.py` attaches `AgentCorePostDeployFixups` inline policy to every agent role. |
+| `secretsmanager:GetSecretValue` on `serverlessstrands/langfuse` | Agent runs fine but emits **zero traces** to Langfuse. Visible only as `[otel_bootstrap] tracing setup failed (...AccessDenied...)` on the first log line after a cold start. | Same inline policy, `LangfuseTracingSecretRead` statement. |
 
 When AWS fixes these gaps upstream this script becomes a no-op (still
 idempotent, still safe to run).
+
+## Tracing (Langfuse)
+
+Traces go to Langfuse Cloud instead of CloudWatch GenAI Observability — the two
+are mutually exclusive, and `DISABLE_ADOT_OBSERVABILITY=true` in
+`agentcore.json` turns the AWS side off.
+
+The wiring lives in `app/MainAgent/otel_bootstrap.py`, which is the container
+entrypoint. It reads the Langfuse keypair from Secrets Manager, exports the
+`OTEL_EXPORTER_OTLP_*` vars, then execs `opentelemetry-instrument python -m main`.
+
+Two reasons it has to happen before exec rather than inside `main.py`:
+
+1. `opentelemetry-instrument` reads the OTLP env vars once, at process start.
+2. Strands' `Tracer.is_langfuse` greps `OTEL_EXPORTER_OTLP_ENDPOINT` for the
+   string `langfuse`. Only when it matches does Strands write tool input/output
+   as span **attributes**; otherwise they become span **events**, which Langfuse
+   does not render — tool calls would appear in the UI with empty payloads.
+
+It also suppresses two sources of span spam, both of which the ADOT distro
+normally handled as part of `AGENT_OBSERVABILITY_ENABLED` — which we turned off
+along with ADOT, so we have to do it ourselves:
+
+| Var | Why |
+| --- | --- |
+| `OTEL_PYTHON_EXCLUDED_URLS=/ping$` | AgentCore health-checks `GET /ping` every ~2s per container. Traced, that is ~40k spans/day per container against a 50k/month free tier. |
+| `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=starlette,asgi,urllib3` | The agent streams over SSE and the ASGI instrumentation emits one `http send` span **per chunk** — measured 104 observations for a single answer, ~70 of them noise. There is no env var to drop send/receive spans, so the HTTP instrumentation is disabled outright. |
+
+Disabling Starlette costs nothing meaningful: Strands emits its own
+`invoke_agent`, tool, and generation spans from its own tracer. `botocore` stays
+enabled so AgentCore Memory calls stay visible, and `threading` stays enabled
+because Strands depends on it for trace-context propagation across threads.
+
+Creating/rotating the secret (it is **not** managed by Terraform, matching how
+the other tool secrets in this project are handled):
+
+```bash
+AWS_PROFILE=developer-dongik aws secretsmanager create-secret \
+  --name serverlessstrands/langfuse \
+  --region ap-northeast-2 \
+  --secret-string '{"public_key":"pk-lf-...","secret_key":"sk-lf-...","host":"https://jp.cloud.langfuse.com"}'
+
+# rotate later with: aws secretsmanager put-secret-value --secret-id serverlessstrands/langfuse --secret-string '{...}'
+```
+
+`host` is optional and defaults to `https://jp.cloud.langfuse.com` — this
+project's Langfuse org is in the **Japan** region, closest to `ap-northeast-2`.
+The host must match the region where the Langfuse project was created; keys from
+a JP project will 401 against the US or EU ingestion endpoint.
 
 ## Usage
 

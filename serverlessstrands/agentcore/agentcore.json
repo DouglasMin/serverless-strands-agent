@@ -16,6 +16,18 @@
       "runtimeVersion": "PYTHON_3_14",
       "envVars": [
         {
+          "name": "DISABLE_ADOT_OBSERVABILITY",
+          "value": "true"
+        },
+        {
+          "name": "LANGFUSE_SECRET_ID",
+          "value": "serverlessstrands/langfuse"
+        },
+        {
+          "name": "OTEL_SERVICE_NAME",
+          "value": "serverlessstrands-mainagent"
+        },
+        {
           "name": "MEMORY_ID",
           "value": "serverlessstrands_ChatMemory-4Q3NbO5016"
         },

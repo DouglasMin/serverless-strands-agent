@@ -141,7 +141,7 @@ Details: `docs/agentcore-inventory.md`
 - [ ] Gmail OAuth tool (AgentCore Identity 3LO)
 - [ ] MS Office tools (OneDrive, Outlook)
 - [ ] Specialized Agents via A2A (Deep Research, Code Agent)
-- [ ] AgentCore Observability setup
+- [x] Observability — Langfuse Cloud tracing via OTLP (`scripts/README.md` → Tracing)
 - [ ] Code Interpreter tool (sandboxed execution)
 - [ ] Browser tool (AgentCore Browser + Nova Act)
 - [ ] Speech model integration
@@ -158,6 +158,11 @@ Details: `docs/agentcore-inventory.md`
 5. **AgentCore `runtimeSessionId`** must be ≥33 chars (use full UUIDs)
 6. **AgentCore Gateway Integration targets** (openApiSchema) in ap-northeast-2 have a service bug — credential fetch count stays at 0, returns "An internal error occurred". Workaround: wrap API in Lambda, register as Lambda target
 7. **Gateway target type change** — cannot update from `openApiSchema` to `lambda`; must delete and recreate
+8. **Langfuse tracing is mutually exclusive with CloudWatch GenAI Observability** — `DISABLE_ADOT_OBSERVABILITY=true` is required; you cannot dual-export without running your own collector
+9. **Strands only writes tool I/O as span attributes when the OTLP endpoint contains `langfuse`** (`Tracer.is_langfuse`) — otherwise tool calls render with empty payloads in the Langfuse UI
+10. **Disabling ADOT also disables its instrumentation filtering** — AgentCore's `GET /ping` health check (every ~2s per container) gets traced and floods the backend; `OTEL_PYTHON_EXCLUDED_URLS=/ping$` is required
+11. **SSE streaming emits one ASGI `http send` span per chunk** (~70 per answer) — no env var can drop them, so `starlette`/`asgi` instrumentation is disabled via `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`
+12. **Containers warm at deploy time keep serving old env/IAM** — after a post-deploy IAM fix, existing containers still fail until they rotate; verify against a freshly-started container, not the first invocation
 8. **Browser geolocation is per-request context** — location-bearing turns disable AgentCore Memory; do not store current location in Memory or DynamoDB unless product requirements change and user consent is explicit
 
 ## License
