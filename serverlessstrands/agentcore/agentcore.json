@@ -20,6 +20,10 @@
           "value": "true"
         },
         {
+          "name": "ENVIRONMENT",
+          "value": "prod"
+        },
+        {
           "name": "LANGFUSE_SECRET_ID",
           "value": "serverlessstrands/langfuse"
         },

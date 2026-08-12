@@ -41,6 +41,7 @@ REGION: str = (
     or os.environ.get("AWS_DEFAULT_REGION")
     or "ap-northeast-2"
 )
+ENVIRONMENT: str = os.environ.get("ENVIRONMENT", "dev")
 
 mcp_clients = [get_streamable_http_mcp_client()]
 
@@ -104,11 +105,36 @@ for mcp_client in mcp_clients:
         tools.append(mcp_client)
 
 
+def trace_attributes(
+    session_id: str, actor_id: str, enable_memory: bool
+) -> dict[str, Any]:
+    """Attributes Langfuse maps onto its session/user/tag concepts.
+
+    Without these every trace is anonymous, so "show me what this user hit"
+    and multi-turn replay are both impossible — and it cannot be backfilled.
+
+    Keys must match Langfuse's OTel mapping exactly, and Strands silently
+    drops any value that is not str/int/float/bool or a list of those
+    (Agent.__init__), so both are covered by tests.
+    """
+    return {
+        "session.id": session_id,
+        "user.id": actor_id,
+        "langfuse.trace.tags": [
+            f"env:{ENVIRONMENT}",
+            # Location-bearing turns run without Memory; being able to filter
+            # on that separates "the agent forgot" from "Memory was off".
+            f"memory:{'on' if enable_memory else 'off'}",
+        ],
+    }
+
+
 def build_agent(session_id: str, actor_id: str, enable_memory: bool = True) -> Agent:
     kwargs: dict[str, Any] = {
         "model": load_model(),
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "tools": tools,
+        "trace_attributes": trace_attributes(session_id, actor_id, enable_memory),
     }
 
     if MEMORY_ID and enable_memory:

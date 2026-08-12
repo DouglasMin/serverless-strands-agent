@@ -55,6 +55,29 @@ Disabling Starlette costs nothing meaningful: Strands emits its own
 enabled so AgentCore Memory calls stay visible, and `threading` stays enabled
 because Strands depends on it for trace-context propagation across threads.
 
+### Trace attribution
+
+`main.trace_attributes()` attaches the keys Langfuse maps onto its own concepts:
+
+| Attribute | Becomes |
+| --- | --- |
+| `session.id` | Langfuse **session** — groups a multi-turn conversation so it can be replayed end to end |
+| `user.id` | Langfuse **user** — per-user filtering and cost attribution |
+| `langfuse.trace.tags` | `env:<ENVIRONMENT>` and `memory:on\|off` |
+
+`ENVIRONMENT` is `prod` on the deployed runtime (set in `agentcore.json`) and
+defaults to `dev` everywhere else. The `memory:` tag records whether the turn
+ran with AgentCore Memory — location-bearing turns disable it, and being able to
+filter on that separates "the agent forgot" from "Memory was off for this turn".
+
+Two failure modes here are silent, so both are covered by tests: Langfuse only
+recognises these exact key names, and `Agent.__init__` drops any value that is
+not `str`/`int`/`float`/`bool` or a list of those. In both cases the trace still
+arrives — just anonymous.
+
+None of this backfills. Traces recorded before attribution stay anonymous, and
+the free tier only retains 30 days.
+
 Creating/rotating the secret (it is **not** managed by Terraform, matching how
 the other tool secrets in this project are handled):
 
