@@ -1,3 +1,4 @@
+import { getIdToken } from "./auth";
 import type {
   SessionDetail,
   SessionSummary,
@@ -8,25 +9,41 @@ import type {
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
+/** Thrown when the session is gone; callers surface the sign-in screen. */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("session expired");
+    this.name = "UnauthorizedError";
+  }
+}
+
+// The user id is no longer sent by the client at all — the Lambda reads it
+// from the verified `sub` claim, so a forged id is not expressible.
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getIdToken();
+  if (!token) throw new UnauthorizedError();
+  return { authorization: `Bearer ${token}` };
+}
+
 /* ─── REST endpoints ─────────────────────────────────────── */
 
-export async function fetchSessions(userId: string): Promise<SessionSummary[]> {
-  const res = await fetch(
-    `${BASE}/api/sessions?userId=${encodeURIComponent(userId)}`
-  );
+export async function fetchSessions(): Promise<SessionSummary[]> {
+  const res = await fetch(`${BASE}/api/sessions`, {
+    headers: await authHeaders()
+  });
+  if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   if (body.error) throw new Error(body.error);
   return (body.sessions ?? []) as SessionSummary[];
 }
 
-export async function fetchSession(
-  sessionId: string,
-  userId: string
-): Promise<SessionDetail> {
+export async function fetchSession(sessionId: string): Promise<SessionDetail> {
   const res = await fetch(
-    `${BASE}/api/sessions/${encodeURIComponent(sessionId)}?userId=${encodeURIComponent(userId)}`
+    `${BASE}/api/sessions/${encodeURIComponent(sessionId)}`,
+    { headers: await authHeaders() }
   );
+  if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   if (body.error) throw new Error(body.error);
@@ -38,7 +55,6 @@ export async function fetchSession(
 interface ChatOpts {
   sessionId: string | null;
   prompt: string;
-  userId: string;
   userLocation?: UserLocation | null;
   signal?: AbortSignal;
 }
@@ -46,17 +62,17 @@ interface ChatOpts {
 export async function* streamChat({
   sessionId,
   prompt,
-  userId,
   userLocation,
   signal
 }: ChatOpts): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId, prompt, userId, userLocation }),
+    headers: { "content-type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ sessionId, prompt, userLocation }),
     signal
   });
 
+  if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
   const reader = res.body.getReader();

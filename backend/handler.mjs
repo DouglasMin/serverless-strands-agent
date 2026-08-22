@@ -1,9 +1,13 @@
 // handler.mjs — Lambda Function URL (RESPONSE_STREAM) entry point.
 //
+// Every route requires a Cognito ID token in `Authorization: Bearer <jwt>`.
+// The caller's identity is taken from the verified `sub` claim only.
+//
 // Routes:
 //   POST /api/chat             — stream agent response (SSE)
-//   GET  /api/sessions         — list sessions for ?userId=…
+//   GET  /api/sessions         — list the caller's sessions
 //   GET  /api/sessions/:id     — load one session's messages
+//   POST /api/auth/complete    — finish an AgentCore Identity 3LO handshake
 
 import {
   BedrockAgentCoreClient,
@@ -16,6 +20,7 @@ import {
   QueryCommand,
   UpdateCommand
 } from "@aws-sdk/lib-dynamodb";
+import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { randomUUID } from "node:crypto";
 
 const REGION = process.env.AWS_REGION_NAME;
@@ -23,12 +28,23 @@ const AGENT_RUNTIME_ARN = process.env.AGENT_RUNTIME_ARN;
 const SESSIONS_TABLE = process.env.SESSIONS_TABLE;
 const USER_INDEX = process.env.SESSIONS_USER_INDEX ?? "byUser";
 const TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 30);
+const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID;
+const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID;
 
 const TITLE_MAX = 80;
 const SESSION_LIST_LIMIT = 100;
 
 const agent = new BedrockAgentCoreClient({ region: REGION });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
+
+// ID token rather than access token: the only thing this API needs from the
+// caller is *who they are*, and `sub` is the identity assertion. Created at
+// module scope so the JWKS fetch is cached across warm invocations.
+const jwtVerifier = CognitoJwtVerifier.create({
+  userPoolId: COGNITO_USER_POOL_ID,
+  tokenUse: "id",
+  clientId: COGNITO_CLIENT_ID
+});
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -49,6 +65,32 @@ const writeJson = (responseStream, body) => {
 const writeSseError = (responseStream, message) => {
   responseStream.write(sseFrame("error", { message }));
   responseStream.end();
+};
+
+// Resolves the caller to a verified Cognito `sub`. Everything downstream keys
+// off this value — sessions, DynamoDB ownership, and AgentCore Identity's 3LO
+// token vault — so it must never fall back to a client-supplied string.
+async function authenticate(event) {
+  const headers = event?.headers ?? {};
+  const raw = headers.authorization ?? headers.Authorization ?? "";
+  const match = /^Bearer\s+(.+)$/i.exec(raw.trim());
+  if (!match) return { error: "missing bearer token" };
+
+  try {
+    const claims = await jwtVerifier.verify(match[1]);
+    return { userId: claims.sub };
+  } catch (err) {
+    return { error: `invalid token: ${err?.message ?? err}` };
+  }
+}
+
+const respondStatus = (responseStream, statusCode, body) => {
+  const stream = awslambda.HttpResponseStream.from(responseStream, {
+    statusCode,
+    headers: { "content-type": "application/json" }
+  });
+  stream.write(JSON.stringify(body));
+  stream.end();
 };
 
 const parseBody = (event) => {
@@ -114,6 +156,13 @@ async function appendMessage(sessionId, userId, role, content, extra = {}) {
       TableName: SESSIONS_TABLE,
       Key: { sessionId },
       UpdateExpression: "SET " + expr.join(", "),
+      // `sessionId` arrives from the request body and AgentCore does not
+      // enforce session-to-user mapping, so without this a caller could append
+      // turns to somebody else's transcript (`if_not_exists` would even keep
+      // the victim as owner). A brand-new session has no userId yet, which is
+      // what the first clause allows. Enforced by DynamoDB rather than a
+      // read-then-write so concurrent first turns cannot race past it.
+      ConditionExpression: "attribute_not_exists(userId) OR userId = :uid",
       ExpressionAttributeNames: names,
       ExpressionAttributeValues: values
     })
@@ -124,7 +173,7 @@ async function appendMessage(sessionId, userId, role, content, extra = {}) {
 // POST /api/chat — stream agent response as SSE
 // ─────────────────────────────────────────────────────────────
 
-async function handleChat(event, responseStream) {
+async function handleChat(event, responseStream, userId) {
   const writeFrame = (name, data) => responseStream.write(sseFrame(name, data));
 
   let body;
@@ -142,13 +191,16 @@ async function handleChat(event, responseStream) {
   }
 
   const sessionId = body.sessionId ?? randomUUID();
-  const userId = body.userId ?? sessionId;
   const userLocation = parseUserLocation(body.userLocation);
   writeFrame("session", { sessionId });
 
   try {
     await appendMessage(sessionId, userId, "user", prompt);
   } catch (err) {
+    if (err?.name === "ConditionalCheckFailedException") {
+      writeSseError(responseStream, "session not found");
+      return;
+    }
     writeSseError(responseStream, `DDB write failed: ${err?.message ?? err}`);
     return;
   }
@@ -256,16 +308,10 @@ async function handleChat(event, responseStream) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/sessions?userId=… — list sessions, newest first
+// GET /api/sessions — list the caller's sessions, newest first
 // ─────────────────────────────────────────────────────────────
 
-async function handleListSessions(event, responseStream) {
-  const userId = event?.queryStringParameters?.userId;
-  if (!userId) {
-    writeJson(responseStream, { error: "userId query parameter required" });
-    return;
-  }
-
+async function handleListSessions(_event, responseStream, userId) {
   try {
     const res = await ddb.send(
       new QueryCommand({
@@ -285,12 +331,10 @@ async function handleListSessions(event, responseStream) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/sessions/:id?userId=… — load full session messages
+// GET /api/sessions/:id — load full session messages (owner only)
 // ─────────────────────────────────────────────────────────────
 
-async function handleGetSession(event, responseStream, sessionId) {
-  const userId = event?.queryStringParameters?.userId;
-
+async function handleGetSession(_event, responseStream, sessionId, userId) {
   try {
     const res = await ddb.send(
       new GetCommand({
@@ -305,8 +349,9 @@ async function handleGetSession(event, responseStream, sessionId) {
       return;
     }
 
-    // Quiet defense — anonymous setup, but don't cross-read.
-    if (userId && item.userId && item.userId !== userId) {
+    // Ownership check. `userId` is a verified token claim, so this is a real
+    // boundary rather than a comparison of two attacker-supplied strings.
+    if (item.userId !== userId) {
       writeJson(responseStream, { error: "not found" });
       return;
     }
@@ -327,25 +372,12 @@ async function handleGetSession(event, responseStream, sessionId) {
 // POST /api/auth/complete — session binding callback
 // ─────────────────────────────────────────────────────────────
 
-async function handleAuthComplete(event, responseStream) {
+async function handleAuthComplete(event, responseStream, userId) {
   const params = event?.queryStringParameters ?? {};
   const sessionUri = params.session_id;
 
   if (!sessionUri) {
     writeJson(responseStream, { error: "session_id query parameter required" });
-    return;
-  }
-
-  let body;
-  try {
-    body = parseBody(event);
-  } catch {
-    body = {};
-  }
-
-  const userId = body.userId || params.userId;
-  if (!userId) {
-    writeJson(responseStream, { error: "userId required" });
     return;
   }
 
@@ -378,29 +410,35 @@ export const handler = awslambda.streamifyResponse(
       return;
     }
 
+    // Authenticate before routing so no handler can be reached unauthenticated.
+    const auth = await authenticate(event);
+    if (auth.error) {
+      respondStatus(responseStream, 401, { error: auth.error });
+      return;
+    }
+    const { userId } = auth;
+
     if (method === "POST" && rawPath.endsWith("/chat")) {
-      await handleChat(event, responseStream);
+      await handleChat(event, responseStream, userId);
       return;
     }
 
-    if (method === "POST" && rawPath.includes("/auth/complete")) {
-      await handleAuthComplete(event, responseStream);
-      return;
-    }
-
-    if (method === "GET" && rawPath.includes("/auth/complete")) {
-      await handleAuthComplete(event, responseStream);
+    if (
+      (method === "POST" || method === "GET") &&
+      rawPath.includes("/auth/complete")
+    ) {
+      await handleAuthComplete(event, responseStream, userId);
       return;
     }
 
     if (method === "GET" && rawPath.endsWith("/sessions")) {
-      await handleListSessions(event, responseStream);
+      await handleListSessions(event, responseStream, userId);
       return;
     }
 
     const sessionMatch = rawPath.match(/\/sessions\/([^/]+)$/);
     if (method === "GET" && sessionMatch) {
-      await handleGetSession(event, responseStream, sessionMatch[1]);
+      await handleGetSession(event, responseStream, sessionMatch[1], userId);
       return;
     }
 

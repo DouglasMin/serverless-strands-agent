@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getUserId } from "../lib/user";
+import { getIdToken } from "../lib/auth";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -19,16 +19,22 @@ export function AuthCallback() {
       return;
     }
 
-    const userId = getUserId();
-
-    fetch(
-      `${BASE}/api/auth/complete?session_id=${encodeURIComponent(sessionId)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId }),
-      }
-    )
+    // The Lambda derives the user from the token; this page asserts no identity.
+    getIdToken()
+      .then((token) => {
+        if (!token) throw new Error("Not signed in - sign in, then retry.");
+        return fetch(
+          `${BASE}/api/auth/complete?session_id=${encodeURIComponent(sessionId)}`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${token}`,
+            },
+            body: "{}",
+          }
+        );
+      })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok || body.error) {

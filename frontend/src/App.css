@@ -1246,3 +1246,121 @@
     }
   }
 }
+
+/* ── Sign-in ───────────────────────────────────────────────── */
+
+.signin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.signin__panel {
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.signin__mark {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border-radius: var(--r-md);
+  background: linear-gradient(145deg, var(--accent), var(--accent-hover));
+  animation: empty-item-in 400ms var(--ease-out) both;
+}
+
+.signin__title {
+  margin: 16px 0 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  animation: empty-item-in 400ms var(--ease-out) 50ms both;
+}
+
+.signin__hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-subtle);
+  animation: empty-item-in 400ms var(--ease-out) 100ms both;
+}
+
+.signin__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 24px;
+  padding: 11px 16px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+  animation: empty-item-in 400ms var(--ease-out) 150ms both;
+}
+
+.signin__button:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--accent-line);
+}
+
+.signin__button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.signin__button:disabled {
+  color: var(--fg-subtle);
+  cursor: default;
+}
+
+.signin__error {
+  margin: 14px 0 0;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.header__account {
+  margin-left: auto;
+  max-width: 190px;
+  overflow: hidden;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.header__account:hover {
+  color: var(--fg);
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}

@@ -2,8 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
+import { SignIn } from "./components/SignIn";
 import { Sidebar } from "./components/Sidebar";
-import { fetchSession, fetchSessions, streamChat } from "./lib/api";
+import {
+  UnauthorizedError,
+  fetchSession,
+  fetchSessions,
+  streamChat
+} from "./lib/api";
+import {
+  completeSignIn,
+  currentUser,
+  getIdToken,
+  isAuthConfigured,
+  signIn,
+  signOut,
+  type AuthUser
+} from "./lib/auth";
 import { getCurrentLocation, promptLikelyNeedsLocation } from "./lib/geolocation";
 import type {
   ChatMessage,
@@ -11,13 +26,18 @@ import type {
   SessionSummary,
   UserLocation
 } from "./lib/types";
-import { getUserId } from "./lib/user";
 import "./App.css";
 
 const isNarrow = () => window.matchMedia("(max-width: 768px)").matches;
 
+type AuthState =
+  | { status: "loading" }
+  | { status: "signedOut"; error?: string }
+  | { status: "signedIn"; user: AuthUser };
+
 export default function App() {
-  const [userId] = useState(() => getUserId());
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const signedIn = auth.status === "signedIn";
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -31,21 +51,67 @@ export default function App() {
   // Guards against a slow fetch landing after a newer one (or a new chat).
   const loadSeq = useRef(0);
 
+  // Runs once on load: finishes a redirect if we just came back from Cognito,
+  // otherwise revives (and silently refreshes) any stored session.
+  useEffect(() => {
+    void (async () => {
+      if (!isAuthConfigured()) {
+        setAuth({
+          status: "signedOut",
+          error:
+            "Auth is not configured — build with VITE_COGNITO_DOMAIN and VITE_COGNITO_CLIENT_ID set."
+        });
+        return;
+      }
+      try {
+        await completeSignIn();
+      } catch (err) {
+        setAuth({
+          status: "signedOut",
+          error: err instanceof Error ? err.message : String(err)
+        });
+        return;
+      }
+      const token = await getIdToken();
+      const user = token ? currentUser() : null;
+      setAuth(user ? { status: "signedIn", user } : { status: "signedOut" });
+    })();
+  }, []);
+
+  // A token can die mid-session (refresh revoked, pool client changed). Drop
+  // straight back to the sign-in screen rather than showing a bare HTTP error.
+  const handleAuthFailure = useCallback((err: unknown): boolean => {
+    if (!(err instanceof UnauthorizedError)) return false;
+    setAuth({ status: "signedOut" });
+    return true;
+  }, []);
+
+  const startSignIn = useCallback(() => {
+    void signIn().catch((err: unknown) => {
+      setAuth({
+        status: "signedOut",
+        error: err instanceof Error ? err.message : String(err)
+      });
+    });
+  }, []);
+
   const refreshSessions = useCallback(async () => {
     try {
-      const list = await fetchSessions(userId);
+      const list = await fetchSessions();
       setSessions(list);
     } catch (err) {
+      if (handleAuthFailure(err)) return;
       // List failures are non-fatal — sidebar just stays as-is.
       console.warn("session list failed:", err);
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId]);
+  }, [handleAuthFailure]);
 
   useEffect(() => {
+    if (!signedIn) return;
     void refreshSessions();
-  }, [refreshSessions]);
+  }, [refreshSessions, signedIn]);
 
   const openSession = useCallback(
     async (sessionId: string) => {
@@ -59,7 +125,7 @@ export default function App() {
       // the outgoing transcript stays put and fades out instead.
       setSwapping(true);
       try {
-        const detail = await fetchSession(sessionId, userId);
+        const detail = await fetchSession(sessionId);
         if (seq !== loadSeq.current) return;
         setMessages(
           detail.messages.map((m) => ({
@@ -70,13 +136,14 @@ export default function App() {
         );
       } catch (err) {
         if (seq !== loadSeq.current) return;
+        if (handleAuthFailure(err)) return;
         setMessages([]);
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (seq === loadSeq.current) setSwapping(false);
       }
     },
-    [streaming, userId]
+    [streaming, handleAuthFailure]
   );
 
   const startNewChat = useCallback(() => {
@@ -132,7 +199,6 @@ export default function App() {
         for await (const ev of streamChat({
           sessionId: activeId,
           prompt,
-          userId,
           userLocation
         })) {
           switch (ev.type) {
@@ -204,7 +270,9 @@ export default function App() {
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (!handleAuthFailure(err)) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
       } finally {
         setStreaming(false);
         // Refresh so the new session (or updated title/updatedAt) shows up.
@@ -214,7 +282,7 @@ export default function App() {
         }
       }
     },
-    [activeId, streaming, userId, refreshSessions]
+    [activeId, streaming, refreshSessions, handleAuthFailure]
   );
 
   const setReminderFromPreview = useCallback(
@@ -234,6 +302,12 @@ export default function App() {
   const activeSession = sessions.find((s) => s.sessionId === activeId);
   const headerTitle = activeSession?.title?.trim() || "Untitled";
 
+  // Every hook above runs unconditionally; only the render branches.
+  if (auth.status === "loading") return <div className="signin" />;
+  if (auth.status === "signedOut") {
+    return <SignIn onSignIn={startSignIn} error={auth.error} />;
+  }
+
   return (
     <div className="app" data-sidebar={sidebarOpen ? "open" : "closed"}>
       <Sidebar
@@ -251,6 +325,8 @@ export default function App() {
           isNew={!activeId}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          userEmail={auth.user.email}
+          onSignOut={signOut}
         />
         <MessageList
           messages={messages}

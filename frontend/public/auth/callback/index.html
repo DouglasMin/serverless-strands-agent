@@ -51,13 +51,35 @@
         return;
       }
 
-      const userId = localStorage.getItem("serverlessstrands:userId") || "anonymous";
+      // Same origin as the app, so the ID token the main window stored is
+      // readable here. The Lambda derives the user from it — this page no
+      // longer asserts an identity of its own.
+      let idToken = null;
+      try {
+        idToken = JSON.parse(localStorage.getItem("serverlessstrands:tokens") || "null")?.idToken ?? null;
+      } catch (_) {
+        idToken = null;
+      }
+
+      if (!idToken) {
+        spinnerEl.style.display = "none";
+        statusEl.textContent = "Not signed in — sign in to the app, then retry.";
+        statusEl.className = "error";
+        return;
+      }
 
       try {
         const base = window.location.origin;
         const res = await fetch(
-          `${base}/api/auth/complete?session_id=${encodeURIComponent(sessionId)}&userId=${encodeURIComponent(userId)}`,
-          { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId }) }
+          `${base}/api/auth/complete?session_id=${encodeURIComponent(sessionId)}`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${idToken}`
+            },
+            body: "{}"
+          }
         );
         const data = await res.json();
         spinnerEl.style.display = "none";

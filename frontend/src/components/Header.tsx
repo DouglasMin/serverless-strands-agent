@@ -3,9 +3,18 @@ interface Props {
   isNew: boolean;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  userEmail?: string;
+  onSignOut: () => void;
 }
 
-export function Header({ title, isNew, sidebarOpen, onToggleSidebar }: Props) {
+export function Header({
+  title,
+  isNew,
+  sidebarOpen,
+  onToggleSidebar,
+  userEmail,
+  onSignOut
+}: Props) {
   return (
     <header className="header">
       {!sidebarOpen && (
@@ -28,6 +37,14 @@ export function Header({ title, isNew, sidebarOpen, onToggleSidebar }: Props) {
           {isNew ? "New conversation" : title}
         </span>
       </h1>
+      <button
+        className="header__account"
+        onClick={onSignOut}
+        type="button"
+        title={userEmail ? `Sign out of ${userEmail}` : "Sign out"}
+      >
+        {userEmail ?? "Sign out"}
+      </button>
     </header>
   );
 }

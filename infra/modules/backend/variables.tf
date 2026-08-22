@@ -38,3 +38,18 @@ variable "image_retention_count" {
   type        = number
   default     = 10
 }
+
+variable "cognito_user_pool_id" {
+  description = "Cognito user pool the Lambda verifies ID tokens against."
+  type        = string
+}
+
+variable "cognito_client_id" {
+  description = "Cognito app client ID the Lambda requires in the token `aud` claim."
+  type        = string
+}
+
+variable "allowed_origins" {
+  description = "Exact origins permitted by the Function URL CORS config. Replaces the previous wildcard now that requests carry an Authorization header."
+  type        = list(string)
+}
