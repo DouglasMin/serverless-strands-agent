@@ -124,6 +124,20 @@ function parseFrame(frame: string): StreamEvent | null {
         preview: parsed as unknown as RoutePreview
       };
     }
+    case "document_artifact": {
+      const parsed = safeJson(body);
+      if (!parsed) return null;
+      return {
+        type: "document_artifact",
+        document: {
+          filename: String(parsed.filename || "document"),
+          fileType: String(parsed.file_type || parsed.fileType || "document"),
+          sizeBytes: Number(parsed.size_bytes || parsed.sizeBytes || 0),
+          dataUri: String(parsed.data_uri || parsed.dataUri || ""),
+          summary: parsed.summary ? String(parsed.summary) : undefined
+        }
+      };
+    }
     case "auth_url":
       return { type: "auth_url", url: stringField(body, "url", body) };
     case "done":

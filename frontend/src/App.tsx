@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ArtifactCanvas } from "./components/ArtifactCanvas";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
@@ -21,6 +22,7 @@ import {
 } from "./lib/auth";
 import { getCurrentLocation, promptLikelyNeedsLocation } from "./lib/geolocation";
 import type {
+  ArtifactItem,
   ChatMessage,
   RoutePreview,
   SessionSummary,
@@ -185,6 +187,7 @@ export default function App() {
       setStreaming(true);
 
       let capturedSessionId = activeId;
+      const seenAuthUrls = new Set<string>();
 
       try {
         let userLocation: UserLocation | null = null;
@@ -209,18 +212,23 @@ export default function App() {
               }
               break;
             case "auth_url":
-              window.open(ev.url, "_blank", "width=600,height=700");
-              setMessages((prev) => {
-                const next = [...prev];
-                const last = next[next.length - 1];
-                if (last?.role === "assistant") {
-                  next[next.length - 1] = {
-                    ...last,
-                    text: last.text + "\n\nAuthorization required - a popup has opened. Please complete the sign-in.\n\n"
-                  };
-                }
-                return next;
-              });
+              if (!seenAuthUrls.has(ev.url)) {
+                seenAuthUrls.add(ev.url);
+                window.open(ev.url, "oauth_popup", "width=600,height=700");
+                setMessages((prev) => {
+                  const next = [...prev];
+                  const last = next[next.length - 1];
+                  if (last?.role === "assistant") {
+                    next[next.length - 1] = {
+                      ...last,
+                      text:
+                        last.text +
+                        "\n\nAuthorization required - a popup has opened. Please complete the sign-in.\n\n"
+                    };
+                  }
+                  return next;
+                });
+              }
               break;
             case "tool_use":
               setMessages((prev) => {
@@ -254,6 +262,19 @@ export default function App() {
                   next[next.length - 1] = {
                     ...last,
                     routePreviews: [...(last.routePreviews ?? []), ev.preview]
+                  };
+                }
+                return next;
+              });
+              break;
+            case "document_artifact":
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = {
+                    ...last,
+                    documents: [...(last.documents ?? []), ev.document]
                   };
                 }
                 return next;
@@ -299,6 +320,8 @@ export default function App() {
     [send]
   );
 
+  const [activeArtifact, setActiveArtifact] = useState<ArtifactItem | null>(null);
+
   const activeSession = sessions.find((s) => s.sessionId === activeId);
   const headerTitle = activeSession?.title?.trim() || "Untitled";
 
@@ -309,7 +332,11 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-sidebar={sidebarOpen ? "open" : "closed"}>
+    <div
+      className="app"
+      data-sidebar={sidebarOpen ? "open" : "closed"}
+      data-canvas={activeArtifact ? "open" : "closed"}
+    >
       <Sidebar
         sessions={sessions}
         activeId={activeId}
@@ -336,9 +363,17 @@ export default function App() {
           swapping={swapping}
           onSetReminder={setReminderFromPreview}
           onSuggest={send}
+          onOpenArtifact={setActiveArtifact}
         />
         <Composer onSend={send} disabled={streaming} />
       </main>
+
+      {activeArtifact && (
+        <ArtifactCanvas
+          artifact={activeArtifact}
+          onClose={() => setActiveArtifact(null)}
+        />
+      )}
     </div>
   );
 }

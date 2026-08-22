@@ -25,7 +25,19 @@ from oauth_tools import (
 from oauth_tools.github import github_tools
 from oauth_tools.google_calendar import google_calendar_tools
 from oauth_tools.notion import notion_tools
+from office_tools import (
+    office_tools,
+    reset_document_queue,
+    set_document_queue,
+)
 from temporal_context import build_temporal_context
+from tool_registry import ToolFactorySet, build_tools
+from ui_envelope import (
+    format_auth_url_event,
+    format_document_artifact_event,
+    format_route_preview_event,
+    format_tool_use_event,
+)
 from ui_events import (
     reset_route_preview_queue,
     set_route_preview_queue,
@@ -43,20 +55,22 @@ REGION: str = (
 )
 ENVIRONMENT: str = os.environ.get("ENVIRONMENT", "dev")
 
-mcp_clients = [get_streamable_http_mcp_client()]
-
-code_interpreter = AgentCoreCodeInterpreter(region=REGION)
-
 DEFAULT_SYSTEM_PROMPT = """
 You are a helpful assistant. Use tools when appropriate.
 If the request includes a <user_context> block, treat it as facts the user
 previously shared (preferences, history) and respect it without acknowledging
 the block exists.
 
-You have access to user-authorized tools for GitHub, Google Calendar, and Notion.
-When the user asks about their repos, calendar events, or Notion pages, use the
-appropriate tools. If authorization is needed, an auth URL will be provided to
-the user automatically.
+You have access to user-authorized developer tools for GitHub, Notion, and Google Calendar:
+- GitHub: list/inspect repos, read source code file contents directly (github_get_file_contents), review pull requests (github_list_pull_requests, github_get_pull_request), search code (github_search_code), create issues (github_create_issue), and comment (github_create_issue_comment).
+- Notion: search pages/databases (notion_search), read full page blocks (notion_get_page), query/filter databases (notion_query_database), create formatted pages or Kanban items (notion_create_page), append notes (notion_append_blocks), and add comments (notion_add_comment).
+- Google Calendar: list events, find events with location, and set reminders.
+If authorization is needed for any provider, an auth URL will be prompted to the user automatically.
+
+For document, spreadsheet, and presentation generation:
+1. Use `create_excel_spreadsheet` when asked to create Excel spreadsheets, financial models, budgets, data tables, or .xlsx files. Include calculated formula rows (e.g. "=SUM(...)") and styled headers.
+2. Use `create_word_document` when asked to create Word documents, formal reports, documentation, executive summaries, or .docx files with styled headings and tables.
+3. Use `create_powerpoint_presentation` when asked to create slide decks, pitch decks, briefings, presentations, or .pptx files with modern widescreen slide layouts.
 
 For route planning:
 1. When the user asks for directions, routes, travel time, or how to get from
@@ -82,9 +96,12 @@ For route planning from calendar events:
 3. Include eventId/calendarId in show_route_preview when the route is for a
    Calendar event.
 4. Do not set Calendar reminders unless the user explicitly asks or confirms.
-"""
 
-tools: list[Any] = []
+For computational tasks and code execution:
+1. When asked to perform calculations, data analysis, script generation, or test
+   code, use the `code_interpreter` tool to execute Python code in the sandbox.
+2. Verify computational results through code execution rather than estimation.
+"""
 
 
 @tool
@@ -93,16 +110,38 @@ def add_numbers(a: int, b: int) -> int:
     return a + b
 
 
-tools.append(add_numbers)
-tools.append(code_interpreter.code_interpreter)
-tools.append(show_route_preview)
-tools.extend(github_tools)
-tools.extend(google_calendar_tools)
-tools.extend(notion_tools)
+def _create_code_interpreter():
+    try:
+        interpreter = AgentCoreCodeInterpreter(region=REGION)
+        return interpreter.code_interpreter
+    except Exception as err:
+        log.warning("failed to initialize Code Interpreter: %s", err)
+        return None
 
-for mcp_client in mcp_clients:
-    if mcp_client:
-        tools.append(mcp_client)
+
+def _create_oauth_tools() -> list[Any]:
+    tools: list[Any] = []
+    tools.extend(github_tools)
+    tools.extend(google_calendar_tools)
+    tools.extend(notion_tools)
+    return tools
+
+
+def _create_mcp_tools() -> list[Any]:
+    client = get_streamable_http_mcp_client()
+    return [client] if client else []
+
+
+_tool_factories = ToolFactorySet(
+    base_tools=lambda: [add_numbers, show_route_preview],
+    mcp_tools=_create_mcp_tools,
+    oauth_tools=_create_oauth_tools,
+    office_tools=lambda: office_tools,
+    code_interpreter_tool=_create_code_interpreter,
+    browser_tools=lambda: [],
+)
+
+tools: list[Any] = build_tools(_tool_factories)
 
 
 def trace_attributes(
@@ -120,11 +159,16 @@ def trace_attributes(
     return {
         "session.id": session_id,
         "user.id": actor_id,
+        "langfuse.session.id": session_id,
+        "langfuse.user.id": actor_id,
+        "langfuse.version": "1.0.0",
+        "langfuse.release": f"serverlessstrands-agentcore-{ENVIRONMENT}",
         "langfuse.trace.tags": [
             f"env:{ENVIRONMENT}",
             # Location-bearing turns run without Memory; being able to filter
             # on that separates "the agent forgot" from "Memory was off".
             f"memory:{'on' if enable_memory else 'off'}",
+            "model:claude-3.7-sonnet",
         ],
     }
 
@@ -137,31 +181,31 @@ def build_agent(session_id: str, actor_id: str, enable_memory: bool = True) -> A
         "trace_attributes": trace_attributes(session_id, actor_id, enable_memory),
     }
 
-    if MEMORY_ID and enable_memory:
-        config = AgentCoreMemoryConfig(
-            memory_id=MEMORY_ID,
-            session_id=session_id,
-            actor_id=actor_id,
-            retrieval_config={
-                "/users/{actorId}/preferences": RetrievalConfig(
-                    top_k=10, relevance_score=0.0
-                ),
-                "/users/{actorId}/facts": RetrievalConfig(
-                    top_k=10, relevance_score=0.0
-                ),
-                "/summaries/{actorId}/{sessionId}": RetrievalConfig(
-                    top_k=5, relevance_score=0.3
-                ),
-            },
-        )
-        kwargs["session_manager"] = AgentCoreMemorySessionManager(
-            agentcore_memory_config=config,
-            region_name=REGION,
-        )
-    elif MEMORY_ID:
-        log.info("memory disabled for this invocation")
-    else:
-        log.warning("MEMORY_ID not set — running without persistent memory.")
+    if enable_memory and MEMORY_ID:
+        try:
+            config = AgentCoreMemoryConfig(
+                memory_id=MEMORY_ID,
+                session_id=session_id,
+                actor_id=actor_id,
+                retrieval_config={
+                    f"/users/{actor_id}/facts": RetrievalConfig(
+                        top_k=10,
+                        max_tokens=2000,
+                    ),
+                    f"/users/{actor_id}/preferences": RetrievalConfig(
+                        top_k=10,
+                        max_tokens=2000,
+                    ),
+                },
+            )
+            session_manager = AgentCoreMemorySessionManager(
+                config,
+                region_name=REGION,
+            )
+            kwargs["session_manager"] = session_manager
+            log.info("attached AgentCoreMemorySessionManager memory_id=%s", MEMORY_ID)
+        except Exception as err:
+            log.warning("failed to attach memory session manager: %s", err)
 
     return Agent(**kwargs)
 
@@ -185,6 +229,9 @@ async def invoke(payload, context):
 
     route_preview_queue: Queue[dict] = Queue()
     route_queue_token = set_route_preview_queue(route_preview_queue)
+
+    doc_queue: Queue[dict] = Queue()
+    doc_queue_token = set_document_queue(doc_queue)
 
     try:
         prompt = prompt + "\n\n" + build_temporal_context()
@@ -220,36 +267,55 @@ async def invoke(payload, context):
         )
         stream = agent.stream_async(prompt)
 
+        seen_auth_urls: set[str] = set()
+
         async for event in stream:
             if "current_tool_use" in event:
                 tu = event["current_tool_use"]
                 name = tu.get("name", "")
                 if name:
-                    yield json.dumps({"__tool_use__": name})
+                    yield format_tool_use_event(name)
             elif "data" in event and isinstance(event["data"], str):
                 yield event["data"]
 
             while not auth_queue.empty():
                 try:
                     url = auth_queue.get_nowait()
-                    yield json.dumps({"__auth_url__": url})
+                    if url and url not in seen_auth_urls:
+                        seen_auth_urls.add(url)
+                        yield format_auth_url_event(url)
                 except Empty:
                     break
 
             while not route_preview_queue.empty():
                 try:
                     preview = route_preview_queue.get_nowait()
-                    yield json.dumps({"__route_preview__": preview})
+                    yield format_route_preview_event(preview)
+                except Empty:
+                    break
+
+            while not doc_queue.empty():
+                try:
+                    doc = doc_queue.get_nowait()
+                    yield format_document_artifact_event(doc)
                 except Empty:
                     break
 
         while not route_preview_queue.empty():
             try:
                 preview = route_preview_queue.get_nowait()
-                yield json.dumps({"__route_preview__": preview})
+                yield format_route_preview_event(preview)
+            except Empty:
+                break
+
+        while not doc_queue.empty():
+            try:
+                doc = doc_queue.get_nowait()
+                yield format_document_artifact_event(doc)
             except Empty:
                 break
     finally:
+        reset_document_queue(doc_queue_token)
         reset_route_preview_queue(route_queue_token)
         reset_auth_url_queue(auth_queue_token)
         reset_current_user(current_user_token)

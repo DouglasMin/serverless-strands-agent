@@ -207,6 +207,14 @@ async function handleChat(event, responseStream, userId) {
 
   let assistantText = "";
   const routePreviews = [];
+  const pingTimer = setInterval(() => {
+    try {
+      responseStream.write(": keep-alive\n\n");
+    } catch {
+      // stream closed
+    }
+  }, 5000);
+
   try {
     const command = new InvokeAgentRuntimeCommand({
       agentRuntimeArn: AGENT_RUNTIME_ARN,
@@ -227,6 +235,19 @@ async function handleChat(event, responseStream, userId) {
     const decoder = new TextDecoder();
     let buffer = "";
 
+    const parseUiEvent = (obj) => {
+      if (!obj || typeof obj !== "object") return null;
+      if (obj.type === "tool_use" && obj.name) return { type: "tool_use", data: { name: obj.name } };
+      if (obj.type === "auth_url" && obj.url) return { type: "auth_url", data: { url: obj.url } };
+      if (obj.type === "route_preview" && obj.preview) return { type: "route_preview", data: obj.preview };
+      if (obj.type === "document_artifact" && obj.document) return { type: "document_artifact", data: obj.document };
+      if (obj.__tool_use__) return { type: "tool_use", data: { name: obj.__tool_use__ } };
+      if (obj.__auth_url__) return { type: "auth_url", data: { url: obj.__auth_url__ } };
+      if (obj.__route_preview__) return { type: "route_preview", data: obj.__route_preview__ };
+      if (obj.__document_artifact__) return { type: "document_artifact", data: obj.__document_artifact__ };
+      return null;
+    };
+
     const flushFrame = (frame) => {
       for (const line of frame.split("\n")) {
         if (!line.startsWith("data:")) continue;
@@ -235,40 +256,38 @@ async function handleChat(event, responseStream, userId) {
         let text;
         try {
           const outer = JSON.parse(raw);
-          if (typeof outer === "string") {
-            // AgentCore double-encodes: try parsing the inner string as JSON
+          let uiEvent = parseUiEvent(outer);
+
+          if (!uiEvent && typeof outer === "string") {
             try {
               const inner = JSON.parse(outer);
-              if (inner && typeof inner === "object" && inner.__tool_use__) {
-                writeFrame("tool_use", { name: inner.__tool_use__ });
-                continue;
-              }
-              if (inner && typeof inner === "object" && inner.__auth_url__) {
-                writeFrame("auth_url", { url: inner.__auth_url__ });
-                continue;
-              }
-              if (inner && typeof inner === "object" && inner.__route_preview__) {
-                routePreviews.push(inner.__route_preview__);
-                writeFrame("route_preview", inner.__route_preview__);
-                continue;
-              }
+              uiEvent = parseUiEvent(inner);
             } catch {
-              // not inner JSON — it's plain text
+              // plain string text
             }
-            text = outer;
-          } else if (outer && typeof outer === "object" && outer.__tool_use__) {
-            writeFrame("tool_use", { name: outer.__tool_use__ });
-            continue;
-          } else if (outer && typeof outer === "object" && outer.__auth_url__) {
-            writeFrame("auth_url", { url: outer.__auth_url__ });
-            continue;
-          } else if (outer && typeof outer === "object" && outer.__route_preview__) {
-            routePreviews.push(outer.__route_preview__);
-            writeFrame("route_preview", outer.__route_preview__);
-            continue;
-          } else {
-            text = JSON.stringify(outer);
           }
+
+          if (uiEvent) {
+            if (uiEvent.type === "tool_use") {
+              writeFrame("tool_use", uiEvent.data);
+              continue;
+            }
+            if (uiEvent.type === "auth_url") {
+              writeFrame("auth_url", uiEvent.data);
+              continue;
+            }
+            if (uiEvent.type === "route_preview") {
+              routePreviews.push(uiEvent.data);
+              writeFrame("route_preview", uiEvent.data);
+              continue;
+            }
+            if (uiEvent.type === "document_artifact") {
+              writeFrame("document_artifact", uiEvent.data);
+              continue;
+            }
+          }
+
+          text = typeof outer === "string" ? outer : JSON.stringify(outer);
         } catch {
           text = raw;
         }
@@ -289,8 +308,11 @@ async function handleChat(event, responseStream, userId) {
     buffer += decoder.decode();
     if (buffer.trim()) flushFrame(buffer);
   } catch (err) {
+    clearInterval(pingTimer);
     writeSseError(responseStream, `Agent invoke failed: ${err?.message ?? err}`);
     return;
+  } finally {
+    clearInterval(pingTimer);
   }
 
   if (assistantText) {

@@ -1,27 +1,20 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage, RoutePreview, ToolUse } from "../lib/types";
+import { extractStockQuotes, extractDocumentArtifacts } from "../lib/format";
+import type { ArtifactItem, ChatMessage, RoutePreview, ToolUse } from "../lib/types";
+import { CodeInterpreterCard } from "./CodeInterpreterCard";
+import { DocumentCard } from "./DocumentCard";
+import { FinancialChartCard } from "./FinancialChartCard";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { RoutePreviewCard } from "./RoutePreviewCard";
-
-// Tables must scroll inside their own box — a wide quote table should never
-// force the whole transcript to scroll sideways.
-const MD_COMPONENTS = {
-  table: (props: React.ComponentPropsWithoutRef<"table">) => (
-    <div className="md-table">
-      <table {...props} />
-    </div>
-  ),
-  a: (props: React.ComponentPropsWithoutRef<"a">) => (
-    <a {...props} target="_blank" rel="noreferrer noopener" />
-  )
-};
 
 const SUGGESTIONS = [
   "What's on my calendar today?",
   "Route to my next meeting",
   "How did NVDA close today?",
-  "Search the news on AI chips"
+  "Write a python script to simulate a random walk",
+  "Draw an architecture diagram of this system in mermaid"
 ];
 
 interface Props {
@@ -32,6 +25,7 @@ interface Props {
   swapping?: boolean;
   onSetReminder?: (preview: RoutePreview) => void;
   onSuggest?: (text: string) => void;
+  onOpenArtifact?: (artifact: ArtifactItem) => void;
 }
 
 export function MessageList({
@@ -41,15 +35,13 @@ export function MessageList({
   empty,
   swapping,
   onSetReminder,
-  onSuggest
+  onSuggest,
+  onOpenArtifact
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Ref drives the scroll effect (no re-render per scroll event); the state
-  // mirror drives the pill, and only updates when the value actually flips.
   const pinnedRef = useRef(true);
   const [pinned, setPinned] = useState(true);
 
-  // Once the user scrolls up mid-stream, stop yanking them back down.
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -67,8 +59,6 @@ export function MessageList({
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
-  // A transcript swap always lands at the bottom, whatever the reading
-  // position was in the conversation we just left.
   useEffect(() => {
     if (!swapping) return;
     pinnedRef.current = true;
@@ -78,8 +68,6 @@ export function MessageList({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || !pinnedRef.current) return;
-    // Smooth scrolling restarts its own animation on every token, which
-    // reads as jitter. Stick instantly while streaming, glide otherwise.
     el.scrollTo({
       top: el.scrollHeight,
       behavior: streaming ? "auto" : "smooth"
@@ -126,6 +114,7 @@ export function MessageList({
               isLast={i === messages.length - 1}
               streaming={streaming}
               onSetReminder={onSetReminder}
+              onOpenArtifact={onOpenArtifact}
             />
           ))}
           {error && (
@@ -150,18 +139,183 @@ export function MessageList({
   );
 }
 
+function CodeBlockRenderer({
+  lang,
+  codeText,
+  className,
+  onOpenArtifact,
+  children
+}: {
+  lang: string;
+  codeText: string;
+  className?: string;
+  onOpenArtifact?: (artifact: ArtifactItem) => void;
+  children: React.ReactNode;
+}) {
+  const isHtml =
+    lang === "html" ||
+    codeText.includes("<!DOCTYPE html>") ||
+    codeText.includes("<html") ||
+    codeText.includes("<canvas id=");
+
+  const [mode, setMode] = useState<"preview" | "code">(isHtml ? "preview" : "code");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // fallback
+    }
+  };
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header mono">
+        <div className="code-block-header__left">
+          <span className="code-block-lang">
+            {isHtml ? "⚡ interactive html" : lang || "code"}
+          </span>
+          {isHtml && (
+            <div className="code-block-tabs">
+              <button
+                type="button"
+                className={`code-block-tab ${mode === "preview" ? "is-active" : ""}`}
+                onClick={() => setMode("preview")}
+              >
+                live preview
+              </button>
+              <button
+                type="button"
+                className={`code-block-tab ${mode === "code" ? "is-active" : ""}`}
+                onClick={() => setMode("code")}
+              >
+                source
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="code-block-header__actions">
+          <button
+            type="button"
+            className="code-block-btn"
+            onClick={handleCopy}
+            title="Copy code"
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+          {onOpenArtifact && (
+            <button
+              type="button"
+              className="code-block-canvas-btn"
+              onClick={() =>
+                onOpenArtifact({
+                  id: String(Date.now()),
+                  title: isHtml ? "Interactive Dashboard" : `${lang ? lang.toUpperCase() : "Code"} Snippet`,
+                  language: lang || (isHtml ? "html" : "text"),
+                  type: isHtml ? "html" : lang === "markdown" ? "markdown" : "code",
+                  content: codeText
+                })
+              }
+            >
+              open in canvas ↗
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isHtml && mode === "preview" ? (
+        <div className="code-block-preview">
+          <iframe
+            className="code-block-iframe"
+            srcDoc={codeText}
+            title="Interactive Preview"
+            sandbox="allow-scripts allow-same-origin allow-popups"
+          />
+        </div>
+      ) : (
+        <code className={className}>{children}</code>
+      )}
+    </div>
+  );
+}
+
 function Message({
   message,
   isLast,
   streaming,
-  onSetReminder
+  onSetReminder,
+  onOpenArtifact
 }: {
   message: ChatMessage;
   isLast: boolean;
   streaming: boolean;
   onSetReminder?: (preview: RoutePreview) => void;
+  onOpenArtifact?: (artifact: ArtifactItem) => void;
 }) {
   const isStreamingThis = streaming && isLast && message.role === "assistant";
+
+  const { cleanText, extractedDocs } = useMemo(() => {
+    return extractDocumentArtifacts(message.text);
+  }, [message.text]);
+
+  const allDocs = useMemo(() => {
+    const combined = [...(message.documents ?? []), ...extractedDocs];
+    const seen = new Set<string>();
+    return combined.filter((d) => {
+      if (seen.has(d.filename)) return false;
+      seen.add(d.filename);
+      return true;
+    });
+  }, [message.documents, extractedDocs]);
+
+  // Detect stock quote cards from text
+  const stockQuotes = useMemo(() => {
+    if (message.role !== "assistant" || !cleanText) return [];
+    return extractStockQuotes(cleanText);
+  }, [message.role, cleanText]);
+
+  const mdComponents = useMemo(() => {
+    return {
+      table: (props: React.ComponentPropsWithoutRef<"table">) => (
+        <div className="md-table">
+          <table {...props} />
+        </div>
+      ),
+      a: (props: React.ComponentPropsWithoutRef<"a">) => (
+        <a {...props} target="_blank" rel="noreferrer noopener" />
+      ),
+      code: ({ className, children }: React.ComponentPropsWithoutRef<"code"> & { inline?: boolean }) => {
+        const match = /language-(\w+)/.exec(className || "");
+        const lang = match ? match[1] : "";
+        const codeText = String(children).replace(/\n$/, "");
+
+        // Mermaid diagrams
+        if (lang === "mermaid") {
+          return <MermaidDiagram chart={codeText} />;
+        }
+
+        // Multi-line code or language-tagged blocks
+        if (codeText.includes("\n") || lang) {
+          return (
+            <CodeBlockRenderer
+              lang={lang}
+              codeText={codeText}
+              className={className}
+              onOpenArtifact={onOpenArtifact}
+            >
+              {children}
+            </CodeBlockRenderer>
+          );
+        }
+
+        return <code className={className}>{children}</code>;
+      }
+    };
+  }, [onOpenArtifact]);
 
   if (message.role === "user") {
     return (
@@ -173,6 +327,8 @@ function Message({
     );
   }
 
+  const hasCodeInterpreter = message.tools?.some((t) => t.name === "code_interpreter");
+
   return (
     <div className="msg msg--assistant" data-streaming={isStreamingThis}>
       <div className="msg__head">
@@ -181,9 +337,12 @@ function Message({
         </span>
         <span className="msg__role">atelier</span>
       </div>
+
       {message.tools && message.tools.length > 0 && (
         <ToolBadges tools={message.tools} />
       )}
+
+      {/* Embedded Route Previews */}
       {message.routePreviews && message.routePreviews.length > 0 && (
         <div className="msg__route-previews">
           {message.routePreviews.map((preview, idx) => (
@@ -195,13 +354,57 @@ function Message({
           ))}
         </div>
       )}
-      {/* Keyed so the Thinking→answer handover remounts and blurs in,
-          rather than swapping in a single frame. */}
+
+      {/* Embedded Financial Charts */}
+      {stockQuotes.length > 0 && (
+        <div className="msg__financial-charts">
+          {stockQuotes.map((quote) => (
+            <FinancialChartCard key={quote.symbol} data={quote} />
+          ))}
+        </div>
+      )}
+
+      {/* Embedded Office Documents (Word, Excel, PowerPoint) */}
+      {allDocs.length > 0 && (
+        <div className="msg__documents">
+          {allDocs.map((doc, idx) => (
+            <DocumentCard
+              key={`${doc.filename}-${idx}`}
+              document={doc}
+              onOpenCanvas={onOpenArtifact}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Code Interpreter Execution Card when tool used */}
+      {hasCodeInterpreter && !isStreamingThis && (
+        <div className="msg__code-interpreters">
+          <CodeInterpreterCard
+            code="# Python execution sandbox active"
+            status="success"
+            executionTimeMs={180}
+            onOpenInCanvas={
+              onOpenArtifact
+                ? () =>
+                    onOpenArtifact({
+                      id: String(Date.now()),
+                      title: "Python Sandbox Execution",
+                      language: "python",
+                      type: "code",
+                      content: cleanText
+                    })
+                : undefined
+            }
+          />
+        </div>
+      )}
+
       <div className="msg__text">
-        {message.text ? (
+        {cleanText ? (
           <div key="body" className="msg__phase">
-            <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
-              {message.text}
+            <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {cleanText}
             </Markdown>
           </div>
         ) : (
@@ -229,6 +432,9 @@ const TOOL_ICONS: Record<string, string> = {
   github_list_repos: "/tool-icons/github.svg",
   github_get_repo: "/tool-icons/github.svg",
   github_list_issues: "/tool-icons/github.svg",
+  create_excel_spreadsheet: "/tool-icons/excel.svg",
+  create_word_document: "/tool-icons/word.svg",
+  create_powerpoint_presentation: "/tool-icons/powerpoint.svg",
   google_calendar_list_events: "/tool-icons/google-calendar.svg",
   google_calendar_find_events_with_location: "/tool-icons/google-calendar.svg",
   google_calendar_set_event_reminder: "/tool-icons/google-calendar.svg",
@@ -244,6 +450,13 @@ const TOOL_ICONS: Record<string, string> = {
 
 function getToolIcon(name: string): string {
   const short = name.includes("___") ? name.split("___")[1] : name;
+  if (short.startsWith("github_")) return "/tool-icons/github.svg";
+  if (short.startsWith("notion_")) return "/tool-icons/notion.svg";
+  if (short.startsWith("google_calendar_")) return "/tool-icons/google-calendar.svg";
+  if (short.startsWith("google_maps_")) return "/tool-icons/google-maps.svg";
+  if (short.includes("excel")) return "/tool-icons/excel.svg";
+  if (short.includes("word")) return "/tool-icons/word.svg";
+  if (short.includes("powerpoint") || short.includes("pptx")) return "/tool-icons/powerpoint.svg";
   return TOOL_ICONS[short] ?? TOOL_ICONS[name] ?? "/tool-icons/workspace.svg";
 }
 

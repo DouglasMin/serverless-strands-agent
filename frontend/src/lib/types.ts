@@ -10,6 +10,7 @@ export interface StoredMessage {
   content: string;
   ts: number;
   routePreviews?: RoutePreview[];
+  documents?: DocumentArtifact[];
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -52,11 +53,42 @@ export interface RoutePreview {
   minutesBefore?: number;
 }
 
+export interface ArtifactItem {
+  id: string;
+  title: string;
+  language?: string;
+  type: "code" | "markdown" | "document" | "html";
+  content: string;
+}
+
+export interface DocumentArtifact {
+  filename: string;
+  fileType: "excel" | "word" | "powerpoint" | string;
+  sizeBytes: number;
+  dataUri: string;
+  summary?: string;
+}
+
+export interface StockQuoteData {
+  symbol: string;
+  name?: string;
+  price: number;
+  change?: number;
+  changePercent?: number;
+  currency?: string;
+  high?: number;
+  low?: number;
+  volume?: number | string;
+  historicalPoints?: { time: string; price: number }[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   tools?: ToolUse[];
   routePreviews?: RoutePreview[];
+  artifacts?: ArtifactItem[];
+  documents?: DocumentArtifact[];
 }
 
 export type StreamEvent =
@@ -64,6 +96,7 @@ export type StreamEvent =
   | { type: "delta"; text: string }
   | { type: "tool_use"; name: string }
   | { type: "route_preview"; preview: RoutePreview }
+  | { type: "document_artifact"; document: DocumentArtifact }
   | { type: "auth_url"; url: string }
   | { type: "done"; sessionId: string }
   | { type: "error"; message: string }
