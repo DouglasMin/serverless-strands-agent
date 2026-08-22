@@ -13,6 +13,9 @@ What it patches (all idempotent — put_role_policy overwrites):
   - secretsmanager:GetSecretValue on the Langfuse tracing secret, which
     otel_bootstrap.py reads at container start to configure OTLP export.
     Without it the agent still runs, but emits no traces.
+  - Code Interpreter session APIs. main.py registers the code_interpreter
+    tool unconditionally, but the CDK role grants none of these, so every
+    call 403s after the model has already committed to the tool.
 
 How to run:
   cd <project-root>/serverlessstrands && python ../scripts/post_deploy.py
@@ -34,6 +37,17 @@ POLICY_NAME = "AgentCorePostDeployFixups"
 # Must match LANGFUSE_SECRET_ID in agentcore.json. Secrets Manager appends a
 # random 6-char suffix to the ARN, hence the trailing wildcard.
 LANGFUSE_SECRET_NAME = "serverlessstrands/langfuse"
+
+# Session data-plane only. CreateCodeInterpreter/DeleteCodeInterpreter are
+# control-plane and deliberately withheld — the runtime starts sessions against
+# an existing interpreter, it does not provision them.
+CODE_INTERPRETER_ACTIONS = [
+    "bedrock-agentcore:StartCodeInterpreterSession",
+    "bedrock-agentcore:InvokeCodeInterpreter",
+    "bedrock-agentcore:StopCodeInterpreterSession",
+    "bedrock-agentcore:GetCodeInterpreterSession",
+    "bedrock-agentcore:ListCodeInterpreterSessions",
+]
 
 MEMORY_ACTIONS = [
     "bedrock-agentcore:RetrieveMemoryRecords",
@@ -95,10 +109,34 @@ def collect_agent_roles(region: str, agent_runtime_arns: list[str]) -> dict[str,
     return roles
 
 
+_account_id_cache: str | None = None
+
+
+def account_id() -> str:
+    """Caller's account ID, resolved once per run."""
+    global _account_id_cache
+    if _account_id_cache is None:
+        _account_id_cache = boto3.client("sts").get_caller_identity()["Account"]
+    return _account_id_cache
+
+
 def langfuse_secret_arn(region: str) -> str:
     """Build the wildcard ARN for the Langfuse tracing secret."""
-    account = boto3.client("sts").get_caller_identity()["Account"]
-    return f"arn:aws:secretsmanager:{region}:{account}:secret:{LANGFUSE_SECRET_NAME}-*"
+    return f"arn:aws:secretsmanager:{region}:{account_id()}:secret:{LANGFUSE_SECRET_NAME}-*"
+
+
+def code_interpreter_arns(region: str) -> list[str]:
+    """Both interpreter flavours the runtime may target.
+
+    strands_tools' AgentCoreCodeInterpreter defaults to the AWS-managed
+    `aws.codeinterpreter.v1`, whose ARN carries the literal account segment
+    `aws` rather than ours — granting only on our own account silently misses
+    it. The custom prefix covers interpreters created in this account.
+    """
+    return [
+        f"arn:aws:bedrock-agentcore:{region}:aws:code-interpreter/*",
+        f"arn:aws:bedrock-agentcore:{region}:{account_id()}:code-interpreter-custom/*",
+    ]
 
 
 def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None:
@@ -119,6 +157,12 @@ def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None
                 "Effect": "Allow",
                 "Action": MEMORY_ACTIONS,
                 "Resource": resources,
+            },
+            {
+                "Sid": "AgentCoreCodeInterpreterAccess",
+                "Effect": "Allow",
+                "Action": CODE_INTERPRETER_ACTIONS,
+                "Resource": code_interpreter_arns(region),
             },
             {
                 "Sid": "LangfuseTracingSecretRead",

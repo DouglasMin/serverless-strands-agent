@@ -239,6 +239,7 @@ const TOOL_ICONS: Record<string, string> = {
   google_maps_route_preview: "/tool-icons/workspace.svg",
   notion_search: "/tool-icons/notion.svg",
   notion_get_page: "/tool-icons/notion.svg",
+  code_interpreter: "/tool-icons/code-interpreter.svg",
 };
 
 function getToolIcon(name: string): string {
