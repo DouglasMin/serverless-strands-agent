@@ -20,6 +20,10 @@ frontend/dist/
 .terraform/
 .terraform.lock.hcl
 
+# Terraform variable files (contain secrets, e.g. google_client_secret)
+*.tfvars
+!*.tfvars.example
+
 # AgentCore CLI internals
 serverlessstrands/agentcore/cdk/
 serverlessstrands/agentcore/.cli/
