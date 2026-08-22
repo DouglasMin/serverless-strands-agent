@@ -11,6 +11,10 @@ def test_uses_the_exact_keys_langfuse_maps():
 
     assert attrs["session.id"] == "sess-1"
     assert attrs["user.id"] == "user-1"
+    assert attrs["langfuse.session.id"] == "sess-1"
+    assert attrs["langfuse.user.id"] == "user-1"
+    assert "langfuse.version" in attrs
+    assert "langfuse.release" in attrs
     assert "langfuse.trace.tags" in attrs
 
 
