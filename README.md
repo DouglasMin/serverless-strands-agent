@@ -123,31 +123,33 @@ Details: `docs/agentcore-inventory.md`
 - [x] Streaming chat (SSE) with AgentCore Runtime
 - [x] Cross-session memory (STM + LTM with 3 strategies)
 - [x] Session list with recency grouping (today/yesterday/last 7d/older)
+- [x] User Auth (Cognito) — Google IdP federation with PKCE & JWT `sub` verification
 - [x] Editorial dark UI (Instrument Serif + Inter Tight + JetBrains Mono)
 - [x] AgentCore Gateway — Yahoo Finance, Tavily Search, Google Maps (Lambda targets)
 - [x] AgentCore Identity 3LO — GitHub, Google Calendar (full read+write), Notion (read)
 - [x] Google Mobility Assistant — Calendar event location, Maps route preview, reminder confirmation
+- [x] Code Interpreter tool (sandboxed execution in Bedrock AgentCore)
+- [x] Deterministic tool registry (`tool_registry.py`) with feature flags & AG-UI stream envelopes
 - [x] Tavily Lambda workaround for Gateway Integration bug (ap-northeast-2)
 - [x] Reusable `tool-lambda` Terraform module (ECR + Docker + Lambda + IAM)
 - [x] Tool use badges with SVG/PNG icons per tool
 - [x] Markdown rendering in assistant responses
 - [x] IAM auto-patcher (post_deploy.py) for AgentCore CDK permission gaps
 - [x] `google_calendar_date_info` utility tool (date/day-of-week without external API)
+- [x] Observability — Langfuse Cloud tracing via OTLP (`scripts/README.md` → Tracing)
 
 ## TODO
 
-- [ ] User Auth (Cognito) — replace localStorage userId
 - [ ] Telegram bot integration (second channel)
 - [ ] Gmail OAuth tool (AgentCore Identity 3LO)
-- [ ] MS Office tools (OneDrive, Outlook)
+- [ ] Gateway public API expansion (Wikipedia, arXiv, Weather, Web Search)
 - [ ] Specialized Agents via A2A (Deep Research, Code Agent)
-- [x] Observability — Langfuse Cloud tracing via OTLP (`scripts/README.md` → Tracing)
-- [ ] Code Interpreter tool (sandboxed execution)
-- [ ] Browser tool (AgentCore Browser + Nova Act)
+- [ ] MS Office tools (OneDrive, Outlook)
+- [ ] CloudWatch operational dashboard & metric alarms
 - [ ] Speech model integration
-- [ ] More public API tools (weather, news, etc.)
 - [ ] Production hardening (rate limiting, error monitoring, WAF)
 - [ ] CI/CD pipeline (frontend deploy + backend image build)
+- [ ] Browser tool (AgentCore Browser + Nova Act — deferred until ap-northeast-2 availability)
 
 ## Known Gotchas
 
