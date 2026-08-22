@@ -1,9 +1,9 @@
-import urllib.request
 import json
+import urllib.request
 from typing import Any
 
 from strands import tool
-from oauth_tools import get_oauth_token, auth_url_queue
+from oauth_tools import auth_url_queue, get_oauth_token
 
 PROVIDER_NAME = "notion-provider"
 SCOPES = []
@@ -11,9 +11,15 @@ NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 
 
-def _notion_request(path: str, token: str, method: str = "GET", body: Any = None) -> Any:
+def _notion_request(
+    path: str, token: str, method: str = "GET", body: Any = None
+) -> Any:
     url = f"{NOTION_API}{path}"
-    data = json.dumps(body).encode() if body else None
+    data = (
+        json.dumps(body).encode("utf-8")
+        if body is not None
+        else None
+    )
     req = urllib.request.Request(
         url,
         data=data,
@@ -22,10 +28,12 @@ def _notion_request(path: str, token: str, method: str = "GET", body: Any = None
             "Authorization": f"Bearer {token}",
             "Notion-Version": NOTION_VERSION,
             "Content-Type": "application/json",
+            "User-Agent": "ServerlessStrands-Agent",
         },
     )
     with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+        content = resp.read().decode("utf-8")
+        return json.loads(content) if content else {}
 
 
 def _get_token_or_auth_url() -> tuple[str | None, str | None]:
@@ -39,7 +47,10 @@ def _get_token_or_auth_url() -> tuple[str | None, str | None]:
 
 def _handle_auth(auth_url: str, provider: str = "Notion") -> str:
     auth_url_queue.put_nowait(auth_url)
-    return f"{provider} authorization required. A login popup has been sent to the user. Please wait for them to complete authorization and try again."
+    return (
+        f"{provider} authorization required. A login popup has been sent to the user. "
+        "Please wait for them to complete authorization and try again."
+    )
 
 
 def _extract_title(item: dict) -> str:
@@ -107,8 +118,61 @@ def _extract_property_value(prop: dict) -> Any:
     if ptype == "last_edited_by":
         return prop.get("last_edited_by", {}).get("name")
     if ptype == "files":
-        return [f.get("name", f.get("external", {}).get("url", "")) for f in prop.get("files", [])]
+        return [
+            f.get("name", f.get("external", {}).get("url", ""))
+            for f in prop.get("files", [])
+        ]
     return None
+
+
+def _text_to_notion_blocks(text: str) -> list[dict[str, Any]]:
+    """Convert multi-line text into Notion block objects."""
+    blocks: list[dict[str, Any]] = []
+    for line in text.split("\n"):
+        line_str = line.strip()
+        if not line_str:
+            continue
+        if line_str.startswith("### "):
+            blocks.append({
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": line_str[4:]}}]
+                },
+            })
+        elif line_str.startswith("## "):
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [{"type": "text", "text": {"content": line_str[3:]}}]
+                },
+            })
+        elif line_str.startswith("# "):
+            blocks.append({
+                "object": "block",
+                "type": "heading_1",
+                "heading_1": {
+                    "rich_text": [{"type": "text", "text": {"content": line_str[2:]}}]
+                },
+            })
+        elif line_str.startswith("- ") or line_str.startswith("* "):
+            blocks.append({
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {
+                    "rich_text": [{"type": "text", "text": {"content": line_str[2:]}}]
+                },
+            })
+        else:
+            blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": line_str}}]
+                },
+            })
+    return blocks[:100]  # Notion API block limit
 
 
 @tool
@@ -128,35 +192,152 @@ def notion_search(query: str, max_results: int = 10) -> str:
     )
     results = []
     for item in data.get("results", []):
-        results.append({
-            "type": item.get("object"),
-            "title": _extract_title(item) or "(untitled)",
-            "id": item["id"],
-            "url": item.get("url", ""),
-            "last_edited": item.get("last_edited_time"),
-        })
+        results.append(
+            {
+                "type": item.get("object"),
+                "title": _extract_title(item) or "(untitled)",
+                "id": item.get("id"),
+                "url": item.get("url", ""),
+                "last_edited": item.get("last_edited_time"),
+            }
+        )
     return json.dumps(results, indent=2)
 
 
 @tool
 def notion_get_page(page_id: str) -> str:
-    """Get content blocks of a Notion page by its ID."""
+    """Get content blocks and properties of a Notion page by its ID."""
     token, auth_url = _get_token_or_auth_url()
     if auth_url:
         return _handle_auth(auth_url)
     if not token:
         return "Failed to get Notion token. Please try again later."
 
-    blocks = _notion_request(f"/blocks/{page_id}/children?page_size=100", token)
-    results = []
+    clean_id = page_id.replace("-", "")
+    page_data = _notion_request(f"/pages/{clean_id}", token)
+    title = _extract_title(page_data)
+
+    blocks = _notion_request(f"/blocks/{clean_id}/children?page_size=100", token)
+    content_blocks = []
     for block in blocks.get("results", []):
         block_type = block.get("type", "")
         content = block.get(block_type, {})
         rich_text = content.get("rich_text", [])
         text = "".join(t.get("plain_text", "") for t in rich_text)
         if text:
-            results.append({"type": block_type, "text": text})
-    return json.dumps(results, indent=2)
+            content_blocks.append({"type": block_type, "text": text})
+
+    return json.dumps(
+        {
+            "id": page_data.get("id"),
+            "title": title or "(untitled)",
+            "url": page_data.get("url", ""),
+            "blocks": content_blocks,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@tool
+def notion_create_page(
+    parent_id: str,
+    title: str,
+    content: str = "",
+    is_database: bool = False,
+) -> str:
+    """Create a new page in Notion inside a parent page or as a new item in a database.
+
+    parent_id: ID of the parent page or database.
+    title: Title of the page or database item.
+    content: Multi-line text or Markdown content to populate into the page body.
+    is_database: Set to True if parent_id is a database; False if parent is a page.
+    """
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        return "Failed to get Notion token. Please try again later."
+
+    clean_parent = parent_id.replace("-", "")
+    body: dict[str, Any] = {
+        "parent": {"database_id": clean_parent} if is_database else {"page_id": clean_parent},
+        "properties": {
+            "title" if not is_database else "Name": {
+                "title": [{"type": "text", "text": {"content": title}}]
+            }
+        },
+    }
+
+    if content:
+        body["children"] = _text_to_notion_blocks(content)
+
+    created = _notion_request("/pages", token, method="POST", body=body)
+    return json.dumps(
+        {
+            "id": created.get("id"),
+            "url": created.get("url"),
+            "title": title,
+            "status": "created",
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+@tool
+def notion_append_blocks(block_id: str, text_content: str) -> str:
+    """Append text or formatted notes to an existing Notion page or block."""
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        return "Failed to get Notion token. Please try again later."
+
+    clean_id = block_id.replace("-", "")
+    children = _text_to_notion_blocks(text_content)
+    if not children:
+        return json.dumps({"error": "No content provided to append"})
+
+    res = _notion_request(
+        f"/blocks/{clean_id}/children",
+        token,
+        method="PATCH",
+        body={"children": children},
+    )
+    return json.dumps(
+        {
+            "status": "appended",
+            "blocks_count": len(res.get("results", [])),
+            "parent_id": clean_id,
+        },
+        indent=2,
+    )
+
+
+@tool
+def notion_add_comment(page_id: str, text: str) -> str:
+    """Add a discussion comment to a Notion page."""
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        return "Failed to get Notion token. Please try again later."
+
+    clean_id = page_id.replace("-", "")
+    body = {
+        "parent": {"page_id": clean_id},
+        "rich_text": [{"type": "text", "text": {"content": text}}],
+    }
+    comment = _notion_request("/comments", token, method="POST", body=body)
+    return json.dumps(
+        {
+            "id": comment.get("id"),
+            "status": "comment_added",
+            "text": text,
+        },
+        indent=2,
+    )
 
 
 @tool
@@ -168,7 +349,8 @@ def notion_get_database(database_id: str) -> str:
     if not token:
         return "Failed to get Notion token. Please try again later."
 
-    data = _notion_request(f"/databases/{database_id}", token)
+    clean_id = database_id.replace("-", "")
+    data = _notion_request(f"/databases/{clean_id}", token)
     title_parts = data.get("title", [])
     title = "".join(t.get("plain_text", "") for t in title_parts)
 
@@ -176,15 +358,30 @@ def notion_get_database(database_id: str) -> str:
     for name, prop in data.get("properties", {}).items():
         info: dict[str, Any] = {"type": prop.get("type", "")}
         if prop.get("type") == "select":
-            info["options"] = [o.get("name") for o in prop.get("select", {}).get("options", [])]
+            info["options"] = [
+                o.get("name")
+                for o in prop.get("select", {}).get("options", [])
+            ]
         elif prop.get("type") == "multi_select":
-            info["options"] = [o.get("name") for o in prop.get("multi_select", {}).get("options", [])]
+            info["options"] = [
+                o.get("name")
+                for o in prop.get("multi_select", {}).get("options", [])
+            ]
         elif prop.get("type") == "status":
-            info["options"] = [o.get("name") for o in prop.get("status", {}).get("options", [])]
-            info["groups"] = [g.get("name") for g in prop.get("status", {}).get("groups", [])]
+            info["options"] = [
+                o.get("name")
+                for o in prop.get("status", {}).get("options", [])
+            ]
+            info["groups"] = [
+                g.get("name")
+                for g in prop.get("status", {}).get("groups", [])
+            ]
         properties[name] = info
 
-    return json.dumps({"title": title or "(untitled)", "id": data["id"], "properties": properties}, indent=2)
+    return json.dumps(
+        {"title": title or "(untitled)", "id": data.get("id"), "properties": properties},
+        indent=2,
+    )
 
 
 @tool
@@ -194,31 +391,32 @@ def notion_query_database(
     sorts_json: str = "",
     max_results: int = 20,
 ) -> str:
-    """Query a Notion database with optional filter and sort.
-
-    filter_json: JSON string of a Notion filter object (see Notion API docs). Leave empty for no filter.
-    sorts_json: JSON string of a Notion sorts array. Leave empty for default sort.
-    max_results: Maximum number of results to return (max 100).
-
-    Example filter_json: {"property": "Status", "status": {"equals": "In Progress"}}
-    Example sorts_json: [{"property": "Due Date", "direction": "ascending"}]
-    """
+    """Query a Notion database with optional filter and sort."""
     token, auth_url = _get_token_or_auth_url()
     if auth_url:
         return _handle_auth(auth_url)
     if not token:
         return "Failed to get Notion token. Please try again later."
 
+    clean_id = database_id.replace("-", "")
     body: dict[str, Any] = {"page_size": min(max_results, 100)}
     if filter_json:
-        body["filter"] = json.loads(filter_json)
+        try:
+            body["filter"] = json.loads(filter_json)
+        except Exception:
+            pass
     if sorts_json:
-        body["sorts"] = json.loads(sorts_json)
+        try:
+            body["sorts"] = json.loads(sorts_json)
+        except Exception:
+            pass
 
-    data = _notion_request(f"/databases/{database_id}/query", token, method="POST", body=body)
+    data = _notion_request(
+        f"/databases/{clean_id}/query", token, method="POST", body=body
+    )
     results = []
     for page in data.get("results", []):
-        row: dict[str, Any] = {"id": page["id"], "url": page.get("url", "")}
+        row: dict[str, Any] = {"id": page.get("id"), "url": page.get("url", "")}
         for name, prop in page.get("properties", {}).items():
             val = _extract_property_value(prop)
             if val is not None and val != "" and val != []:
@@ -236,20 +434,23 @@ def notion_list_comments(page_id: str, max_results: int = 20) -> str:
     if not token:
         return "Failed to get Notion token. Please try again later."
 
+    clean_id = page_id.replace("-", "")
     data = _notion_request(
-        f"/comments?block_id={page_id}&page_size={min(max_results, 100)}",
+        f"/comments?block_id={clean_id}&page_size={min(max_results, 100)}",
         token,
     )
     results = []
     for comment in data.get("results", []):
         rich_text = comment.get("rich_text", [])
         text = "".join(t.get("plain_text", "") for t in rich_text)
-        results.append({
-            "id": comment["id"],
-            "text": text,
-            "created_by": comment.get("created_by", {}).get("name", ""),
-            "created_time": comment.get("created_time"),
-        })
+        results.append(
+            {
+                "id": comment.get("id"),
+                "text": text,
+                "created_by": comment.get("created_by", {}).get("name", ""),
+                "created_time": comment.get("created_time"),
+            }
+        )
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
@@ -265,18 +466,25 @@ def notion_list_users() -> str:
     data = _notion_request("/users?page_size=100", token)
     results = []
     for user in data.get("results", []):
-        results.append({
-            "id": user["id"],
-            "name": user.get("name", ""),
-            "type": user.get("type", ""),
-            "email": user.get("person", {}).get("email") if user.get("type") == "person" else None,
-        })
+        results.append(
+            {
+                "id": user.get("id"),
+                "name": user.get("name", ""),
+                "type": user.get("type", ""),
+                "email": user.get("person", {}).get("email")
+                if user.get("type") == "person"
+                else None,
+            }
+        )
     return json.dumps(results, indent=2, ensure_ascii=False)
 
 
 notion_tools = [
     notion_search,
     notion_get_page,
+    notion_create_page,
+    notion_append_blocks,
+    notion_add_comment,
     notion_get_database,
     notion_query_database,
     notion_list_comments,

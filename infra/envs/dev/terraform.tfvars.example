@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored because
+# google_client_secret is a real credential.
+
+# Output of `agentcore deploy`, from the serverlessstrands/ project root.
+agent_runtime_arn = "arn:aws:bedrock-agentcore:<region>:<account>:runtime/serverlessstrands_MainAgent-XXXXXXXXXX"
+
+# Secrets Manager *reference* (name + ARN pattern) for the Google Maps
+# Platform API key. These are identifiers, not the key itself.
+google_maps_secret_id          = "google-maps-api-key"
+google_maps_secret_arn_pattern = "arn:aws:secretsmanager:<region>:<account>:secret:google-maps-api-key*"
+
+# Google Cloud Console -> APIs & Services -> Credentials -> OAuth client ID.
+# Application type MUST be "Web application", and its authorized redirect URI
+# must exactly match:
+#   https://<cognito_domain_prefix>.auth.<region>.amazoncognito.com/oauth2/idpresponse
+#
+# This is a separate client from the AgentCore Identity google-calendar-provider.
+google_client_id     = "<digits>-<32-chars>.apps.googleusercontent.com"
+google_client_secret = "GOCSPX-..."
+
+# Optional — defaults live in variables.tf.
+# site_url              = "https://d1rur2clzx2nyl.cloudfront.net"
+# local_dev_url         = "http://localhost:5173"
+# cognito_domain_prefix = "serverlessstrands-dev"

@@ -192,9 +192,11 @@ resource "aws_lambda_function" "chat" {
 
   environment {
     variables = {
-      AGENT_RUNTIME_ARN = var.agent_runtime_arn
-      SESSIONS_TABLE    = var.sessions_table
-      AWS_REGION_NAME   = var.region # AWS_REGION is reserved
+      AGENT_RUNTIME_ARN    = var.agent_runtime_arn
+      SESSIONS_TABLE       = var.sessions_table
+      AWS_REGION_NAME      = var.region # AWS_REGION is reserved
+      COGNITO_USER_POOL_ID = var.cognito_user_pool_id
+      COGNITO_CLIENT_ID    = var.cognito_client_id
     }
   }
 
@@ -212,11 +214,14 @@ resource "aws_lambda_function_url" "chat" {
   invoke_mode        = "RESPONSE_STREAM"
 
   cors {
-    allow_origins  = ["*"]           # Tighten at the CloudFront layer
-    allow_methods  = ["POST", "GET"] # OPTIONS is auto-handled; declaring it fails Lambda's 6-char member limit
-    allow_headers  = ["content-type"]
-    expose_headers = ["content-type"]
-    max_age        = 86400
+    allow_origins = var.allowed_origins
+    allow_methods = ["POST", "GET"] # OPTIONS is auto-handled; declaring it fails Lambda's 6-char member limit
+    # `authorization` is required or the preflight rejects every authenticated
+    # request before it reaches the handler.
+    allow_headers     = ["content-type", "authorization"]
+    expose_headers    = ["content-type"]
+    allow_credentials = false
+    max_age           = 86400
   }
 }
 

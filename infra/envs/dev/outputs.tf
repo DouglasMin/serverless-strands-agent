@@ -46,3 +46,19 @@ output "google_maps_lambda_arn" {
   description = "ARN of the Google Maps tool Lambda — use this when adding the Gateway target."
   value       = module.tool_google_maps.function_arn
 }
+
+# ── Auth ─────────────────────────────────────────────────────
+
+output "cognito_user_pool_id" {
+  value = module.auth.user_pool_id
+}
+
+output "cognito_client_id" {
+  description = "Public SPA client ID — safe to embed in the frontend bundle."
+  value       = module.auth.client_id
+}
+
+output "cognito_hosted_ui_domain" {
+  description = "Hosted UI host used to build the /oauth2/authorize and /oauth2/token URLs."
+  value       = module.auth.hosted_ui_domain
+}

@@ -9,6 +9,20 @@ module "data" {
   session_ttl_days = var.session_ttl_days
 }
 
+module "auth" {
+  source = "../../modules/auth"
+
+  name_prefix          = local.name_prefix
+  domain_prefix        = var.cognito_domain_prefix
+  google_client_id     = var.google_client_id
+  google_client_secret = var.google_client_secret
+
+  # Cognito matches redirect_uri exactly, so the SPA must send these strings
+  # verbatim. Root path is used so no new SPA route is needed.
+  callback_urls = ["${var.site_url}/", "${var.local_dev_url}/"]
+  logout_urls   = ["${var.site_url}/", "${var.local_dev_url}/"]
+}
+
 module "backend" {
   source = "../../modules/backend"
 
@@ -20,6 +34,10 @@ module "backend" {
   agent_runtime_arn  = var.agent_runtime_arn
   log_retention_days = var.log_retention_days
   lambda_source_dir  = "${path.module}/../../../backend"
+
+  cognito_user_pool_id = module.auth.user_pool_id
+  cognito_client_id    = module.auth.client_id
+  allowed_origins      = [var.site_url, var.local_dev_url]
 }
 
 module "web" {

@@ -33,4 +33,6 @@ USER bedrock_agentcore
 # 9000: A2A Mode
 EXPOSE 8080 8000 9000
 
-CMD ["opentelemetry-instrument", "python", "-m", "main"]
+# otel_bootstrap resolves Langfuse credentials from Secrets Manager into the
+# OTEL_* env vars, then execs `opentelemetry-instrument python -m main`.
+CMD ["python", "-m", "otel_bootstrap"]

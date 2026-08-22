@@ -10,6 +10,12 @@ Why this exists:
 What it patches (all idempotent — put_role_policy overwrites):
   - bedrock-agentcore:RetrieveMemoryRecords + related read APIs on every
     Memory resource for every agent runtime in the project.
+  - secretsmanager:GetSecretValue on the Langfuse tracing secret, which
+    otel_bootstrap.py reads at container start to configure OTLP export.
+    Without it the agent still runs, but emits no traces.
+  - Code Interpreter session APIs. main.py registers the code_interpreter
+    tool unconditionally, but the CDK role grants none of these, so every
+    call 403s after the model has already committed to the tool.
 
 How to run:
   cd <project-root>/serverlessstrands && python ../scripts/post_deploy.py
@@ -27,6 +33,21 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 POLICY_NAME = "AgentCorePostDeployFixups"
+
+# Must match LANGFUSE_SECRET_ID in agentcore.json. Secrets Manager appends a
+# random 6-char suffix to the ARN, hence the trailing wildcard.
+LANGFUSE_SECRET_NAME = "serverlessstrands/langfuse"
+
+# Session data-plane only. CreateCodeInterpreter/DeleteCodeInterpreter are
+# control-plane and deliberately withheld — the runtime starts sessions against
+# an existing interpreter, it does not provision them.
+CODE_INTERPRETER_ACTIONS = [
+    "bedrock-agentcore:StartCodeInterpreterSession",
+    "bedrock-agentcore:InvokeCodeInterpreter",
+    "bedrock-agentcore:StopCodeInterpreterSession",
+    "bedrock-agentcore:GetCodeInterpreterSession",
+    "bedrock-agentcore:ListCodeInterpreterSessions",
+]
 
 MEMORY_ACTIONS = [
     "bedrock-agentcore:RetrieveMemoryRecords",
@@ -88,8 +109,38 @@ def collect_agent_roles(region: str, agent_runtime_arns: list[str]) -> dict[str,
     return roles
 
 
-def patch_memory_access(role_arn: str, memory_arns: list[str]) -> None:
-    """Attach an inline policy granting Memory access. Idempotent."""
+_account_id_cache: str | None = None
+
+
+def account_id() -> str:
+    """Caller's account ID, resolved once per run."""
+    global _account_id_cache
+    if _account_id_cache is None:
+        _account_id_cache = boto3.client("sts").get_caller_identity()["Account"]
+    return _account_id_cache
+
+
+def langfuse_secret_arn(region: str) -> str:
+    """Build the wildcard ARN for the Langfuse tracing secret."""
+    return f"arn:aws:secretsmanager:{region}:{account_id()}:secret:{LANGFUSE_SECRET_NAME}-*"
+
+
+def code_interpreter_arns(region: str) -> list[str]:
+    """Both interpreter flavours the runtime may target.
+
+    strands_tools' AgentCoreCodeInterpreter defaults to the AWS-managed
+    `aws.codeinterpreter.v1`, whose ARN carries the literal account segment
+    `aws` rather than ours — granting only on our own account silently misses
+    it. The custom prefix covers interpreters created in this account.
+    """
+    return [
+        f"arn:aws:bedrock-agentcore:{region}:aws:code-interpreter/*",
+        f"arn:aws:bedrock-agentcore:{region}:{account_id()}:code-interpreter-custom/*",
+    ]
+
+
+def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None:
+    """Attach an inline policy granting Memory + tracing-secret access. Idempotent."""
     iam = boto3.client("iam")
     role_name = role_name_from_arn(role_arn)
 
@@ -106,7 +157,19 @@ def patch_memory_access(role_arn: str, memory_arns: list[str]) -> None:
                 "Effect": "Allow",
                 "Action": MEMORY_ACTIONS,
                 "Resource": resources,
-            }
+            },
+            {
+                "Sid": "AgentCoreCodeInterpreterAccess",
+                "Effect": "Allow",
+                "Action": CODE_INTERPRETER_ACTIONS,
+                "Resource": code_interpreter_arns(region),
+            },
+            {
+                "Sid": "LangfuseTracingSecretRead",
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": langfuse_secret_arn(region),
+            },
         ],
     }
 
@@ -159,7 +222,7 @@ def main() -> int:
     print("→ Patching IAM (idempotent)...")
     for runtime_arn, role_arn in roles.items():
         try:
-            patch_memory_access(role_arn, memory_arns)
+            patch_agent_role(role_arn, memory_arns, region)
         except (BotoCoreError, ClientError) as exc:
             sys.stderr.write(f"  ! failed to patch {role_arn}: {exc}\n")
             return 4

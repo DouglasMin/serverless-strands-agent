@@ -41,7 +41,11 @@ class AuthUrlQueue:
         return _auth_url_queue.get() or _fallback_auth_url_queue
 
     def put_nowait(self, auth_url: str) -> None:
-        self._queue().put_nowait(auth_url)
+        q = self._queue()
+        with q.mutex:
+            if auth_url not in q.queue:
+                q.queue.append(auth_url)
+                q.not_empty.notify()
 
     def get_nowait(self) -> str:
         return self._queue().get_nowait()

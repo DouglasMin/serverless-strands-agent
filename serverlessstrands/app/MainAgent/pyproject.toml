@@ -13,6 +13,9 @@ dependencies = [
     "bedrock-agentcore >= 1.9.1",
     "botocore[crt] >= 1.35.0",
     "mcp >= 1.19.0",
+    "openpyxl>=3.1.5",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
     "strands-agents >= 1.13.0",
     "strands-agents-tools >= 0.1.0",
 ]

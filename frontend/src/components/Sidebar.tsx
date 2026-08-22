@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { formatRecency, groupByRecency } from "../lib/format";
 import type { SessionSummary } from "../lib/types";
 
@@ -21,6 +21,18 @@ export function Sidebar({
 }: Props) {
   const groups = useMemo(() => groupByRecency(sessions), [sessions]);
 
+  // Rows already on screen when the list first arrives are not "new" — the
+  // initial load shouldn't cascade, it's the path to the first click.
+  const seen = useRef<Set<string>>(new Set());
+  const seeded = useRef(false);
+  const isNewRow = (id: string) => seeded.current && !seen.current.has(id);
+
+  useEffect(() => {
+    if (loading) return;
+    sessions.forEach((s) => seen.current.add(s.sessionId));
+    seeded.current = true;
+  }, [sessions, loading]);
+
   return (
     <aside className="sidebar">
       <header className="sidebar__head">
@@ -29,33 +41,26 @@ export function Sidebar({
           onClick={onToggle}
           aria-label="collapse sidebar"
         >
-          <span className="sidebar__brand-mark">¶</span>
+          <span className="mark" aria-hidden>
+            ◆
+          </span>
           <span className="sidebar__brand-text">atelier</span>
-        </button>
-        <button
-          className="sidebar__new"
-          onClick={onNew}
-          aria-label="start a new conversation"
-        >
-          <span className="sidebar__new-icon mono">+</span>
-          <span className="sidebar__new-text">new</span>
         </button>
       </header>
 
       <div className="sidebar__list">
         {loading ? (
           <div className="sidebar__empty">
-            <p className="mono sidebar__empty-text">loading…</p>
+            <p className="sidebar__empty-text">Loading…</p>
           </div>
         ) : sessions.length === 0 ? (
           <div className="sidebar__empty">
-            <span className="sidebar__empty-mark serif">·</span>
-            <p className="mono sidebar__empty-text">no conversations yet</p>
+            <p className="sidebar__empty-text">No conversations yet</p>
           </div>
         ) : (
           groups.map((group) => (
             <section key={group.label} className="sidebar__group">
-              <h2 className="sidebar__group-label mono">— {group.label}</h2>
+              <h2 className="sidebar__group-label">{group.label}</h2>
               <ul className="sidebar__items">
                 {group.items.map((s) => (
                   <li key={s.sessionId}>
@@ -64,12 +69,13 @@ export function Sidebar({
                         "session" +
                         (activeId === s.sessionId ? " session--active" : "")
                       }
+                      data-new={isNewRow(s.sessionId) ? "true" : undefined}
                       onClick={() => onSelect(s.sessionId)}
                     >
                       <span className="session__title">
-                        {s.title?.trim() || "untitled"}
+                        {s.title?.trim() || "Untitled"}
                       </span>
-                      <span className="session__time mono">
+                      <span className="session__time mono tnum">
                         {formatRecency(s.updatedAt)}
                       </span>
                     </button>
@@ -80,6 +86,22 @@ export function Sidebar({
           ))
         )}
       </div>
+
+      <footer className="sidebar__foot">
+        <button
+          className="sidebar__new"
+          onClick={onNew}
+          aria-label="start a new conversation"
+        >
+          <span className="sidebar__new-icon" aria-hidden>
+            +
+          </span>
+          <span>New chat</span>
+          <span className="sidebar__new-kbd mono" aria-hidden>
+            ⌘K
+          </span>
+        </button>
+      </footer>
     </aside>
   );
 }
