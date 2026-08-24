@@ -74,18 +74,18 @@ resource "null_resource" "build_and_push" {
       REPO_URL="${aws_ecr_repository.lambda.repository_url}"
       REGISTRY="$${REPO_URL%%/*}"
       TAG="${local.source_hash}"
-      export DOCKER_CONFIG="$$(mktemp -d)"
-      trap 'rm -rf "$$DOCKER_CONFIG"' EXIT
 
       echo "→ ECR login: $REGISTRY"
       aws ecr get-login-password --region "${var.region}" \
         | docker login --username AWS --password-stdin "$REGISTRY"
 
-      echo "→ docker build → push $REPO_URL:$TAG"
-      docker build \
+      echo "→ docker buildx build → push $REPO_URL:$TAG"
+      docker buildx build \
+        --platform linux/arm64 \
+        --provenance=false \
         -t "$REPO_URL:$TAG" \
+        --push \
         "${var.lambda_source_dir}"
-      docker push "$REPO_URL:$TAG"
     EOT
   }
 
@@ -128,7 +128,9 @@ resource "aws_iam_role_policy" "ddb" {
         "dynamodb:GetItem",
         "dynamodb:PutItem",
         "dynamodb:UpdateItem",
-        "dynamodb:Query"
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:BatchWriteItem"
       ]
       Resource = [
         var.sessions_table_arn,
@@ -172,6 +174,27 @@ resource "aws_iam_role_policy" "agentcore" {
   })
 }
 
+resource "aws_iam_role_policy" "s3_uploads" {
+  name  = "s3-user-uploads"
+  role  = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ]
+      Resource = [
+        var.uploads_bucket_arn,
+        "${var.uploads_bucket_arn}/*"
+      ]
+    }]
+  })
+}
+
 # ─────────────────────────────────────────────────────────────
 # Lambda function (container image)
 # ─────────────────────────────────────────────────────────────
@@ -187,7 +210,7 @@ resource "aws_lambda_function" "chat" {
   package_type  = "Image"
   image_uri     = local.image_uri
   architectures = ["arm64"]
-  timeout       = 300
+  timeout       = 900
   memory_size   = 512
 
   environment {
@@ -197,6 +220,7 @@ resource "aws_lambda_function" "chat" {
       AWS_REGION_NAME      = var.region # AWS_REGION is reserved
       COGNITO_USER_POOL_ID = var.cognito_user_pool_id
       COGNITO_CLIENT_ID    = var.cognito_client_id
+      UPLOADS_BUCKET       = var.uploads_bucket
     }
   }
 
@@ -215,11 +239,11 @@ resource "aws_lambda_function_url" "chat" {
 
   cors {
     allow_origins = var.allowed_origins
-    allow_methods = ["POST", "GET"] # OPTIONS is auto-handled; declaring it fails Lambda's 6-char member limit
+    allow_methods = ["*"]
     # `authorization` is required or the preflight rejects every authenticated
     # request before it reaches the handler.
-    allow_headers     = ["content-type", "authorization"]
-    expose_headers    = ["content-type"]
+    allow_headers     = ["*"]
+    expose_headers    = ["*"]
     allow_credentials = false
     max_age           = 86400
   }

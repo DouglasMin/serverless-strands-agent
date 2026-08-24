@@ -34,9 +34,15 @@ def _github_request(
         return json.loads(content) if content else {}
 
 
-def _get_token_or_auth_url() -> tuple[str | None, str | None]:
+def _get_token_or_auth_url(force_auth: bool = False) -> tuple[str | None, str | None]:
     """Returns (token, auth_url). One will be None."""
-    result = get_oauth_token(PROVIDER_NAME, SCOPES)
+    result = get_oauth_token(PROVIDER_NAME, SCOPES, force_auth=force_auth)
+    if force_auth:
+        if "auth_url" in result:
+            return None, result["auth_url"]
+        if "token" in result:
+            return result["token"], None
+
     if "token" in result:
         return result["token"], None
     if "auth_url" in result:
@@ -49,8 +55,10 @@ def _handle_auth(auth_url: str) -> str:
 
     auth_url_queue.put_nowait(auth_url)
     return (
-        "GitHub authorization required. A login popup has been sent to the user. "
-        "Please wait for them to complete authorization and try again."
+        f"🔐 **GitHub Authorization Required**\n\n"
+        f"To access your GitHub repositories, please connect your account:\n\n"
+        f"👉 **[Click here to Authorize GitHub]({auth_url})**\n\n"
+        f"*(A sign-in popup was also requested. After completing authorization, please ask again!)*"
     )
 
 

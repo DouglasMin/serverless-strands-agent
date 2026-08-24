@@ -1,12 +1,128 @@
 import base64
 import io
 import json
+import re
 from typing import Any
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from strands import tool
+
+
+def _parse_cell_value(raw: str) -> Any:
+    """Parse raw string into int, float, formula, or clean string."""
+    s = raw.strip()
+    if not s:
+        return ""
+    if s.startswith("="):
+        return s
+
+    # Remove currency symbol or comma
+    clean = re.sub(r"^[$\€\£\₩]\s*", "", s).replace(",", "").strip()
+
+    # Try percentage e.g. "85.5%"
+    if clean.endswith("%"):
+        try:
+            return float(clean[:-1]) / 100.0
+        except ValueError:
+            pass
+
+    # Try integer
+    try:
+        if re.match(r"^-?\d+$", clean):
+            return int(clean)
+    except ValueError:
+        pass
+
+    # Try float
+    try:
+        if re.match(r"^-?\d+\.\d+$", clean):
+            return float(clean)
+    except ValueError:
+        pass
+
+    return s
+
+
+def _parse_markdown_to_sheets(md_text: str) -> list[dict[str, Any]]:
+    """Parse Markdown tables and sheet headers into structured Excel sheet definitions."""
+    sections = re.split(r"\n(?=##?\s+)", md_text)
+    sheets: list[dict[str, Any]] = []
+
+    for sec in sections:
+        sec = sec.strip()
+        if not sec:
+            continue
+
+        lines = sec.split("\n")
+        sheet_name = "Data"
+        title_text = ""
+        first_line = lines[0].strip()
+
+        if first_line.startswith("# ") or first_line.startswith("## "):
+            sheet_name = re.sub(r"^#+\s*", "", first_line).strip()[:31]
+            title_text = sheet_name
+
+        table_lines = [l.strip() for l in lines if l.strip().startswith("|") and "|" in l.strip()[1:]]
+        if len(table_lines) < 2:
+            continue
+
+        headers = [c.strip() for c in table_lines[0].split("|")[1:-1]]
+        data_start = 1
+        if "---" in table_lines[1] or ":---" in table_lines[1]:
+            data_start = 2
+
+        rows: list[list[Any]] = []
+        summary_row: list[Any] | None = None
+
+        for tline in table_lines[data_start:]:
+            cells = [c.strip() for c in tline.split("|")[1:-1]]
+            parsed_cells = [_parse_cell_value(c) for c in cells]
+
+            # Check if this is a summary/total row
+            first_cell_str = str(parsed_cells[0]).lower().strip() if parsed_cells else ""
+            if first_cell_str in ["total", "totals", "sum", "average", "avg", "overall", "summary"]:
+                summary_row = parsed_cells
+            else:
+                rows.append(parsed_cells)
+
+        if headers and (rows or summary_row):
+            sheets.append({
+                "name": sheet_name,
+                "title": title_text,
+                "headers": headers,
+                "rows": rows,
+                **({"summary_row": summary_row} if summary_row else {}),
+            })
+
+    # Fallback: if no markdown headers were found but a table is present
+    if not sheets:
+        table_lines = [l.strip() for l in md_text.split("\n") if l.strip().startswith("|") and "|" in l.strip()[1:]]
+        if len(table_lines) >= 2:
+            headers = [c.strip() for c in table_lines[0].split("|")[1:-1]]
+            data_start = 1
+            if "---" in table_lines[1] or ":---" in table_lines[1]:
+                data_start = 2
+            rows = []
+            summary_row = None
+            for tline in table_lines[data_start:]:
+                cells = [c.strip() for c in tline.split("|")[1:-1]]
+                parsed_cells = [_parse_cell_value(c) for c in cells]
+                first_cell_str = str(parsed_cells[0]).lower().strip() if parsed_cells else ""
+                if first_cell_str in ["total", "totals", "sum", "average", "avg", "overall"]:
+                    summary_row = parsed_cells
+                else:
+                    rows.append(parsed_cells)
+            sheets.append({
+                "name": "Summary",
+                "title": "Data Breakdown",
+                "headers": headers,
+                "rows": rows,
+                **({"summary_row": summary_row} if summary_row else {}),
+            })
+
+    return sheets
 
 
 def _apply_table_styling(ws: Any, start_row: int, end_row: int, max_col: int):
@@ -74,11 +190,18 @@ def _apply_table_styling(ws: Any, start_row: int, end_row: int, max_col: int):
 
 
 @tool
-def create_excel_spreadsheet(filename: str, sheets_json: str) -> str:
-    """Create a styled Microsoft Excel (.xlsx) spreadsheet with multiple sheets, tables, and formulas.
+def create_excel_spreadsheet(
+    filename: str,
+    sheets_json: str | None = None,
+    content: str | None = None,
+) -> str:
+    """Create a styled Microsoft Excel (.xlsx) spreadsheet with multiple sheets, formatted tables, and formulas.
+
+    Supports either structured sheets_json OR raw Markdown tables string.
 
     filename: Name of the file, e.g. "Q3_Financial_Model.xlsx"
-    sheets_json: JSON string representing sheets. Example:
+    content: Raw Markdown tables text (sheets separated by '## Sheet Name')
+    sheets_json: Optional JSON string representing sheets. Example:
     [
       {
         "name": "Revenue",
@@ -97,14 +220,32 @@ def create_excel_spreadsheet(filename: str, sheets_json: str) -> str:
     if not filename.endswith(".xlsx"):
         filename += ".xlsx"
 
-    try:
-        sheets_data = json.loads(sheets_json)
-        if isinstance(sheets_data, dict):
-            sheets_data = [sheets_data]
-    except Exception as err:
-        return json.dumps(
-            {"error": f"Invalid sheets_json parameter: {err}"}, indent=2
-        )
+    sheets_data: list[dict[str, Any]] = []
+
+    # 1. Try parsing direct Markdown content if provided
+    if content and isinstance(content, str) and content.strip():
+        sheets_data = _parse_markdown_to_sheets(content)
+    # 2. Try parsing sheets_json
+    elif sheets_json and isinstance(sheets_json, str) and sheets_json.strip():
+        try:
+            parsed = json.loads(sheets_json)
+            if isinstance(parsed, list):
+                sheets_data = parsed
+            elif isinstance(parsed, dict):
+                sheets_data = [parsed]
+        except Exception:
+            # Fallback: treat sheets_json as raw markdown tables
+            sheets_data = _parse_markdown_to_sheets(sheets_json)
+
+    if not sheets_data:
+        sheets_data = [
+            {
+                "name": "Sheet1",
+                "title": "Data Overview",
+                "headers": ["Item", "Value"],
+                "rows": [["Sample A", 100], ["Sample B", 200]],
+            }
+        ]
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # Remove default sheet

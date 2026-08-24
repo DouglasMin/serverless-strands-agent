@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from queue import Empty, Queue
@@ -16,6 +17,11 @@ from strands_tools.code_interpreter import AgentCoreCodeInterpreter
 
 from mcp_client.client import get_streamable_http_mcp_client
 from model.load import load_model
+from a2a_tools import (
+    deep_research_tools,
+    reset_subagent_queue,
+    set_subagent_queue,
+)
 from oauth_tools import (
     reset_auth_url_queue,
     reset_current_user,
@@ -36,6 +42,7 @@ from ui_envelope import (
     format_auth_url_event,
     format_document_artifact_event,
     format_route_preview_event,
+    format_subagent_event,
     format_tool_use_event,
 )
 from ui_events import (
@@ -67,6 +74,14 @@ You have access to user-authorized developer tools for GitHub, Notion, and Googl
 - Google Calendar: list events, find events with location, and set reminders.
 If authorization is needed for any provider, an auth URL will be prompted to the user automatically.
 
+For deep research and comprehensive investigations:
+1. When asked to perform deep research, in-depth market or technical surveys, competitive analysis, academic reviews, or exhaustive literature synthesis, use the `deep_research` tool.
+2. The `deep_research` tool delegates the mission to the specialized DeepResearchAgent (A2A Protocol) to gather multi-source evidence from live web searches, Wikipedia, and ArXiv papers.
+3. MANDATORY MULTI-STEP WORKFLOW: If the user asks to conduct research AND generate deliverable files (e.g. Word .docx, PowerPoint .pptx, Excel .xlsx):
+   - First call `deep_research` to obtain the comprehensive research dossier.
+   - Do NOT stop after deep research. Immediately in the same turn, take the research findings and call `create_word_document`, `create_powerpoint_presentation`, or `create_excel_spreadsheet` (or all requested tools).
+   - In your final response, summarize the executive findings and confirm the deliverables generated.
+
 For document, spreadsheet, and presentation generation:
 1. Use `create_excel_spreadsheet` when asked to create Excel spreadsheets, financial models, budgets, data tables, or .xlsx files. Include calculated formula rows (e.g. "=SUM(...)") and styled headers.
 2. Use `create_word_document` when asked to create Word documents, formal reports, documentation, executive summaries, or .docx files with styled headings and tables.
@@ -97,10 +112,13 @@ For route planning from calendar events:
    Calendar event.
 4. Do not set Calendar reminders unless the user explicitly asks or confirms.
 
-For computational tasks and code execution:
+For computational tasks, data analysis, and uploaded files:
 1. When asked to perform calculations, data analysis, script generation, or test
    code, use the `code_interpreter` tool to execute Python code in the sandbox.
-2. Verify computational results through code execution rather than estimation.
+2. When the user attaches files in `<user_attachments>` (e.g. CSV, Excel, JSON, or images),
+   use `code_interpreter` with `pandas`, `openpyxl`, or standard Python to load and
+   analyze the data directly from the provided S3 URI or parse the content.
+3. Verify computational results through code execution rather than estimation.
 """
 
 
@@ -139,6 +157,7 @@ _tool_factories = ToolFactorySet(
     office_tools=lambda: office_tools,
     code_interpreter_tool=_create_code_interpreter,
     browser_tools=lambda: [],
+    a2a_tools=lambda: deep_research_tools,
 )
 
 tools: list[Any] = build_tools(_tool_factories)
@@ -233,6 +252,9 @@ async def invoke(payload, context):
     doc_queue: Queue[dict] = Queue()
     doc_queue_token = set_document_queue(doc_queue)
 
+    subagent_queue: Queue[dict] = Queue()
+    subagent_queue_token = set_subagent_queue(subagent_queue)
+
     try:
         prompt = prompt + "\n\n" + build_temporal_context()
 
@@ -260,61 +282,118 @@ async def invoke(payload, context):
                 + "</user_location>"
             )
 
+        attachments = payload.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            att_lines = ["\n\n<user_attachments>"]
+            for att in attachments:
+                if isinstance(att, dict):
+                    fname = att.get("filename", "file.dat")
+                    ctype = att.get("contentType", "application/octet-stream")
+                    durl = att.get("downloadUrl") or att.get("s3Uri", "")
+                    size = att.get("sizeBytes", 0)
+                    att_lines.append(
+                        f"Attachment '{fname}' (Type: {ctype}, Size: {size} bytes):\n"
+                        f"  Download URL: {durl}\n"
+                        f"  In code_interpreter, download and load with:\n"
+                        f"    import urllib.request\n"
+                        f"    urllib.request.urlretrieve('''{durl}''', '{fname}')\n"
+                        f"    # Then open '{fname}' using openpyxl, pandas, csv, or json.\n"
+                    )
+            att_lines.append(
+                "</user_attachments>\n"
+                "The user has attached the file(s) listed above. "
+                "You MUST use `code_interpreter` to download the file(s) via the provided Download URL, "
+                "analyze the contents, perform the requested calculations or charting, and provide the insights."
+            )
+            prompt = prompt + "\n".join(att_lines)
+
         agent = build_agent(
             session_id=session_id,
             actor_id=actor_id,
             enable_memory=not has_user_location,
         )
-        stream = agent.stream_async(prompt)
+        out_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-        seen_auth_urls: set[str] = set()
+        async def stream_consumer():
+            try:
+                async for event in agent.stream_async(prompt):
+                    if "current_tool_use" in event:
+                        tu = event["current_tool_use"]
+                        name = tu.get("name", "")
+                        if name:
+                            await out_queue.put(format_tool_use_event(name))
+                    elif "data" in event and isinstance(event["data"], str):
+                        await out_queue.put(event["data"])
+            except Exception as e:
+                log.error("Agent stream error: %s", e)
+                await out_queue.put(f"\n\n[Agent Error]: {e}")
+            finally:
+                await out_queue.put(None)
 
-        async for event in stream:
-            if "current_tool_use" in event:
-                tu = event["current_tool_use"]
-                name = tu.get("name", "")
-                if name:
-                    yield format_tool_use_event(name)
-            elif "data" in event and isinstance(event["data"], str):
-                yield event["data"]
+        async def queue_poller():
+            seen_auth_urls: set[str] = set()
+            while True:
+                while not subagent_queue.empty():
+                    try:
+                        sub_ev = subagent_queue.get_nowait()
+                        await out_queue.put(format_subagent_event(sub_ev))
+                    except Empty:
+                        break
 
-            while not auth_queue.empty():
+                while not auth_queue.empty():
+                    try:
+                        url = auth_queue.get_nowait()
+                        if url and url not in seen_auth_urls:
+                            seen_auth_urls.add(url)
+                            await out_queue.put(format_auth_url_event(url))
+                    except Empty:
+                        break
+
+                while not route_preview_queue.empty():
+                    try:
+                        preview = route_preview_queue.get_nowait()
+                        await out_queue.put(format_route_preview_event(preview))
+                    except Empty:
+                        break
+
+                while not doc_queue.empty():
+                    try:
+                        doc = doc_queue.get_nowait()
+                        await out_queue.put(format_document_artifact_event(doc))
+                    except Empty:
+                        break
+
+                await asyncio.sleep(0.05)
+
+        consumer_task = asyncio.create_task(stream_consumer())
+        poller_task = asyncio.create_task(queue_poller())
+
+        try:
+            while True:
+                item = await out_queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            poller_task.cancel()
+            await asyncio.gather(consumer_task, return_exceptions=True)
+            while not subagent_queue.empty():
                 try:
-                    url = auth_queue.get_nowait()
-                    if url and url not in seen_auth_urls:
-                        seen_auth_urls.add(url)
-                        yield format_auth_url_event(url)
+                    yield format_subagent_event(subagent_queue.get_nowait())
                 except Empty:
                     break
-
             while not route_preview_queue.empty():
                 try:
-                    preview = route_preview_queue.get_nowait()
-                    yield format_route_preview_event(preview)
+                    yield format_route_preview_event(route_preview_queue.get_nowait())
                 except Empty:
                     break
-
             while not doc_queue.empty():
                 try:
-                    doc = doc_queue.get_nowait()
-                    yield format_document_artifact_event(doc)
+                    yield format_document_artifact_event(doc_queue.get_nowait())
                 except Empty:
                     break
-
-        while not route_preview_queue.empty():
-            try:
-                preview = route_preview_queue.get_nowait()
-                yield format_route_preview_event(preview)
-            except Empty:
-                break
-
-        while not doc_queue.empty():
-            try:
-                doc = doc_queue.get_nowait()
-                yield format_document_artifact_event(doc)
-            except Empty:
-                break
     finally:
+        reset_subagent_queue(subagent_queue_token)
         reset_document_queue(doc_queue_token)
         reset_route_preview_queue(route_queue_token)
         reset_auth_url_queue(auth_queue_token)

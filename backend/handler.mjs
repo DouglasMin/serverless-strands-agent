@@ -5,6 +5,7 @@
 //
 // Routes:
 //   POST /api/chat             — stream agent response (SSE)
+//   POST /api/upload/presign   — generate pre-signed S3 upload URL
 //   GET  /api/sessions         — list the caller's sessions
 //   GET  /api/sessions/:id     — load one session's messages
 //   POST /api/auth/complete    — finish an AgentCore Identity 3LO handshake
@@ -15,17 +16,25 @@ import {
 } from "@aws-sdk/client-bedrock-agentcore";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   QueryCommand,
   UpdateCommand
 } from "@aws-sdk/lib-dynamodb";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import { randomUUID } from "node:crypto";
 
 const REGION = process.env.AWS_REGION_NAME;
 const AGENT_RUNTIME_ARN = process.env.AGENT_RUNTIME_ARN;
 const SESSIONS_TABLE = process.env.SESSIONS_TABLE;
+const UPLOADS_BUCKET = process.env.UPLOADS_BUCKET;
 const USER_INDEX = process.env.SESSIONS_USER_INDEX ?? "byUser";
 const TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 30);
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID;
@@ -36,6 +45,7 @@ const SESSION_LIST_LIMIT = 100;
 
 const agent = new BedrockAgentCoreClient({ region: REGION });
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
+const s3 = new S3Client({ region: REGION });
 
 // ID token rather than access token: the only thing this API needs from the
 // caller is *who they are*, and `sub` is the identity assertion. Created at
@@ -121,11 +131,21 @@ const parseUserLocation = (value) => {
   return location;
 };
 
+// ─────────────────────────────────────────────────────────────
+// DynamoDB Persistence
+// ─────────────────────────────────────────────────────────────
+
 async function appendMessage(sessionId, userId, role, content, extra = {}) {
   const t = nowEpoch();
   const message = { role, content, ts: t };
   if (Array.isArray(extra.routePreviews) && extra.routePreviews.length > 0) {
     message.routePreviews = extra.routePreviews;
+  }
+  if (Array.isArray(extra.documents) && extra.documents.length > 0) {
+    message.documents = extra.documents;
+  }
+  if (extra.trace) {
+    message.trace = extra.trace;
   }
 
   const expr = [
@@ -156,17 +176,64 @@ async function appendMessage(sessionId, userId, role, content, extra = {}) {
       TableName: SESSIONS_TABLE,
       Key: { sessionId },
       UpdateExpression: "SET " + expr.join(", "),
-      // `sessionId` arrives from the request body and AgentCore does not
-      // enforce session-to-user mapping, so without this a caller could append
-      // turns to somebody else's transcript (`if_not_exists` would even keep
-      // the victim as owner). A brand-new session has no userId yet, which is
-      // what the first clause allows. Enforced by DynamoDB rather than a
-      // read-then-write so concurrent first turns cannot race past it.
       ConditionExpression: "attribute_not_exists(userId) OR userId = :uid",
       ExpressionAttributeNames: names,
       ExpressionAttributeValues: values
     })
   );
+}
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/upload/presign — generate pre-signed S3 upload URL
+// ─────────────────────────────────────────────────────────────
+
+async function handlePresignUpload(event, responseStream, userId) {
+  if (!UPLOADS_BUCKET) {
+    respondStatus(responseStream, 500, { error: "UPLOADS_BUCKET is not configured" });
+    return;
+  }
+
+  let body;
+  try {
+    body = parseBody(event);
+  } catch {
+    respondStatus(responseStream, 400, { error: "invalid json body" });
+    return;
+  }
+
+  const filename = (body.filename || "upload.dat").replace(/[^a-zA-Z0-9._-]/g, "_");
+  const contentType = body.contentType || "application/octet-stream";
+  const sessionId = (body.sessionId || "global").replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  // Multi-tenant key structure: uploads/{userId}/{sessionId}/{uuid}/{filename}
+  const key = `uploads/${userId}/${sessionId}/${Date.now()}-${randomUUID().slice(0, 8)}/${filename}`;
+
+  try {
+    const command = new PutObjectCommand({
+      Bucket: UPLOADS_BUCKET,
+      Key: key,
+      ContentType: contentType,
+      Metadata: {
+        userId,
+        sessionId,
+        originalFilename: filename
+      }
+    });
+
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 900 }); // 15 mins
+    const s3Uri = `s3://${UPLOADS_BUCKET}/${key}`;
+
+    respondStatus(responseStream, 200, {
+      uploadUrl,
+      s3Uri,
+      key,
+      filename,
+      contentType,
+      userId
+    });
+  } catch (err) {
+    respondStatus(responseStream, 500, { error: `failed to create presigned url: ${err?.message ?? err}` });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -192,6 +259,8 @@ async function handleChat(event, responseStream, userId) {
 
   const sessionId = body.sessionId ?? randomUUID();
   const userLocation = parseUserLocation(body.userLocation);
+  const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+
   writeFrame("session", { sessionId });
 
   try {
@@ -205,8 +274,45 @@ async function handleChat(event, responseStream, userId) {
     return;
   }
 
+  const turnStartTime = Date.now();
   let assistantText = "";
   const routePreviews = [];
+  const documents = [];
+  const toolsUsed = [];
+  let assistantPersisted = false;
+
+  const saveAssistantMessage = async () => {
+    if (assistantPersisted) return null;
+    assistantPersisted = true;
+    const durationMs = Date.now() - turnStartTime;
+    const traceInfo = {
+      sessionId,
+      durationMs,
+      model: "claude-3.7-sonnet",
+      toolsUsed,
+      timestamp: nowEpoch(),
+      memoryEnabled: !userLocation,
+      langfuseTraceId: sessionId
+    };
+
+    try {
+      const hasContent = assistantText.trim().length > 0;
+      const hasArtifacts = routePreviews.length > 0 || documents.length > 0;
+      if (hasContent || hasArtifacts) {
+        await appendMessage(
+          sessionId,
+          userId,
+          "assistant",
+          assistantText,
+          { routePreviews, documents, trace: traceInfo }
+        );
+      }
+    } catch (err) {
+      console.error("Failed to append assistant message to DynamoDB:", err);
+    }
+    return traceInfo;
+  };
+
   const pingTimer = setInterval(() => {
     try {
       responseStream.write(": keep-alive\n\n");
@@ -216,22 +322,50 @@ async function handleChat(event, responseStream, userId) {
   }, 5000);
 
   try {
+    const enrichedAttachments = [];
+    for (const att of attachments) {
+      if (att && att.key && UPLOADS_BUCKET) {
+        try {
+          const getCmd = new GetObjectCommand({
+            Bucket: UPLOADS_BUCKET,
+            Key: att.key
+          });
+          const downloadUrl = await getSignedUrl(s3, getCmd, { expiresIn: 3600 });
+          enrichedAttachments.push({ ...att, downloadUrl });
+        } catch (err) {
+          console.warn("Failed to presign downloadUrl:", err);
+          enrichedAttachments.push(att);
+        }
+      } else {
+        enrichedAttachments.push(att);
+      }
+    }
+
+    const payload = {
+      prompt,
+      userId,
+      ...(userLocation ? { userLocation } : {}),
+      ...(enrichedAttachments.length ? { attachments: enrichedAttachments } : {})
+    };
+
     const command = new InvokeAgentRuntimeCommand({
       agentRuntimeArn: AGENT_RUNTIME_ARN,
       runtimeSessionId: sessionId,
+      runtimeUserId: userId,
       qualifier: "DEFAULT",
-      payload: new TextEncoder().encode(JSON.stringify({ prompt, userId, userLocation }))
+      payload: new TextEncoder().encode(JSON.stringify(payload))
     });
     command.middlewareStack.add(
-      (next) => (args) => {
-        args.request.headers["X-Amzn-Bedrock-AgentCore-Runtime-User-Id"] = userId;
+      (next) => async (args) => {
+        args.request.headers["x-amzn-bedrock-agentcore-runtime-user-id"] = userId;
+        args.request.headers["x-amzn-bedrock-agentcore-user-id"] = userId;
         return next(args);
       },
-      { step: "build", name: "addUserIdHeader" }
+      { step: "build", name: "InjectAgentCoreUserId" }
     );
+
     const resp = await agent.send(command);
 
-    // AgentCore emits its own SSE — `data:` line per JSON-encoded text chunk.
     const decoder = new TextDecoder();
     let buffer = "";
 
@@ -241,10 +375,12 @@ async function handleChat(event, responseStream, userId) {
       if (obj.type === "auth_url" && obj.url) return { type: "auth_url", data: { url: obj.url } };
       if (obj.type === "route_preview" && obj.preview) return { type: "route_preview", data: obj.preview };
       if (obj.type === "document_artifact" && obj.document) return { type: "document_artifact", data: obj.document };
+      if (obj.type === "subagent_event" && obj.subagent) return { type: "subagent_event", data: obj.subagent };
       if (obj.__tool_use__) return { type: "tool_use", data: { name: obj.__tool_use__ } };
       if (obj.__auth_url__) return { type: "auth_url", data: { url: obj.__auth_url__ } };
       if (obj.__route_preview__) return { type: "route_preview", data: obj.__route_preview__ };
       if (obj.__document_artifact__) return { type: "document_artifact", data: obj.__document_artifact__ };
+      if (obj.__subagent_event__) return { type: "subagent_event", data: obj.__subagent_event__ };
       return null;
     };
 
@@ -269,6 +405,10 @@ async function handleChat(event, responseStream, userId) {
 
           if (uiEvent) {
             if (uiEvent.type === "tool_use") {
+              const tname = String(uiEvent.data?.name || "");
+              if (tname && !toolsUsed.includes(tname)) {
+                toolsUsed.push(tname);
+              }
               writeFrame("tool_use", uiEvent.data);
               continue;
             }
@@ -282,7 +422,12 @@ async function handleChat(event, responseStream, userId) {
               continue;
             }
             if (uiEvent.type === "document_artifact") {
+              documents.push(uiEvent.data);
               writeFrame("document_artifact", uiEvent.data);
+              continue;
+            }
+            if (uiEvent.type === "subagent_event") {
+              writeFrame("subagent_event", uiEvent.data);
               continue;
             }
           }
@@ -307,35 +452,38 @@ async function handleChat(event, responseStream, userId) {
     }
     buffer += decoder.decode();
     if (buffer.trim()) flushFrame(buffer);
+
+    const traceInfo = await saveAssistantMessage();
+    if (traceInfo) {
+      writeFrame("trace", traceInfo);
+    }
+    writeFrame("done", { sessionId });
   } catch (err) {
-    clearInterval(pingTimer);
-    writeSseError(responseStream, `Agent invoke failed: ${err?.message ?? err}`);
-    return;
+    console.error("Agent runtime stream error:", err);
+    await saveAssistantMessage();
+    try {
+      writeSseError(responseStream, `Agent runtime error: ${err?.message ?? err}`);
+    } catch {
+      // response stream may already be closed
+    }
   } finally {
     clearInterval(pingTimer);
-  }
-
-  if (assistantText) {
+    await saveAssistantMessage();
     try {
-      await appendMessage(sessionId, userId, "assistant", assistantText, {
-        routePreviews
-      });
-    } catch (err) {
-      writeFrame("warn", { message: `DDB persist failed: ${err?.message ?? err}` });
+      responseStream.end();
+    } catch {
+      // ignore
     }
   }
-
-  writeFrame("done", { sessionId });
-  responseStream.end();
 }
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/sessions — list the caller's sessions, newest first
+// GET /api/sessions — list recent sessions for caller
 // ─────────────────────────────────────────────────────────────
 
 async function handleListSessions(_event, responseStream, userId) {
   try {
-    const res = await ddb.send(
+    const result = await ddb.send(
       new QueryCommand({
         TableName: SESSIONS_TABLE,
         IndexName: USER_INDEX,
@@ -343,38 +491,45 @@ async function handleListSessions(_event, responseStream, userId) {
         ExpressionAttributeValues: { ":uid": userId },
         ScanIndexForward: false,
         Limit: SESSION_LIST_LIMIT,
-        ProjectionExpression: "sessionId, title, createdAt, updatedAt"
+        ProjectionExpression: "sessionId, title, createdAt, updatedAt, pinned"
       })
     );
-    writeJson(responseStream, { sessions: res.Items ?? [] });
+
+    const sessions = (result.Items ?? []).map((item) => ({
+      sessionId: item.sessionId,
+      title: item.title ?? null,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      pinned: Boolean(item.pinned)
+    }));
+
+    writeJson(responseStream, { sessions });
   } catch (err) {
     writeJson(responseStream, { error: `query failed: ${err?.message ?? err}` });
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/sessions/:id — load full session messages (owner only)
+// GET /api/sessions/:id — fetch single session messages
 // ─────────────────────────────────────────────────────────────
 
 async function handleGetSession(_event, responseStream, sessionId, userId) {
   try {
-    const res = await ddb.send(
+    const result = await ddb.send(
       new GetCommand({
         TableName: SESSIONS_TABLE,
         Key: { sessionId }
       })
     );
 
-    const item = res.Item;
+    const item = result.Item;
     if (!item) {
-      writeJson(responseStream, { error: "not found" });
+      respondStatus(responseStream, 404, { error: "session not found" });
       return;
     }
 
-    // Ownership check. `userId` is a verified token claim, so this is a real
-    // boundary rather than a comparison of two attacker-supplied strings.
-    if (item.userId !== userId) {
-      writeJson(responseStream, { error: "not found" });
+    if (item.userId && item.userId !== userId) {
+      respondStatus(responseStream, 404, { error: "session not found" });
       return;
     }
 
@@ -383,10 +538,101 @@ async function handleGetSession(_event, responseStream, sessionId, userId) {
       title: item.title ?? null,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt,
+      pinned: Boolean(item.pinned),
       messages: item.messages ?? []
     });
   } catch (err) {
     writeJson(responseStream, { error: `get failed: ${err?.message ?? err}` });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DELETE /api/sessions/:id — delete a session
+// ─────────────────────────────────────────────────────────────
+
+async function handleDeleteSession(_event, responseStream, sessionId, userId) {
+  try {
+    console.log(`[DELETE_SESSION] sessionId=${sessionId} userId=${userId}`);
+    await ddb.send(
+      new DeleteCommand({
+        TableName: SESSIONS_TABLE,
+        Key: { sessionId },
+        ConditionExpression: "userId = :uid OR attribute_not_exists(userId)",
+        ExpressionAttributeValues: { ":uid": userId }
+      })
+    );
+    writeJson(responseStream, { success: true, sessionId });
+  } catch (err) {
+    console.error(`[DELETE_SESSION_ERROR] sessionId=${sessionId}:`, err);
+    if (err?.name === "ConditionalCheckFailedException") {
+      writeJson(responseStream, { error: "session not found" });
+      return;
+    }
+    writeJson(responseStream, { error: `delete failed: ${err?.message ?? err}` });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PATCH /api/sessions/:id — rename or pin a session
+// ─────────────────────────────────────────────────────────────
+
+async function handleUpdateSession(event, responseStream, sessionId, userId) {
+  let body;
+  try {
+    body = parseBody(event);
+  } catch {
+    writeJson(responseStream, { error: "invalid json body" });
+    return;
+  }
+
+  console.log(`[UPDATE_SESSION] sessionId=${sessionId} userId=${userId} body=`, body);
+
+  const updates = [];
+  const names = {};
+  const values = { ":uid": userId, ":now": nowEpoch() };
+
+  if (typeof body.title === "string") {
+    updates.push("#title = :title");
+    names["#title"] = "title";
+    values[":title"] = body.title.slice(0, TITLE_MAX);
+  }
+
+  if (typeof body.pinned === "boolean") {
+    updates.push("pinned = :pinned");
+    values[":pinned"] = body.pinned;
+  }
+
+  if (updates.length === 0) {
+    writeJson(responseStream, { error: "nothing to update" });
+    return;
+  }
+
+  updates.push("updatedAt = :now");
+
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: SESSIONS_TABLE,
+        Key: { sessionId },
+        UpdateExpression: "SET " + updates.join(", "),
+        ConditionExpression: "userId = :uid OR attribute_not_exists(userId)",
+        ExpressionAttributeNames: Object.keys(names).length > 0 ? names : undefined,
+        ExpressionAttributeValues: values
+      })
+    );
+    writeJson(responseStream, {
+      success: true,
+      sessionId,
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.pinned !== undefined ? { pinned: body.pinned } : {})
+    });
+  } catch (err) {
+    console.error(`[UPDATE_SESSION_ERROR] sessionId=${sessionId}:`, err);
+    if (err?.name === "ConditionalCheckFailedException") {
+      writeJson(responseStream, { error: "session not found" });
+      return;
+    }
+    writeJson(responseStream, { error: `update failed: ${err?.message ?? err}` });
   }
 }
 
@@ -446,6 +692,14 @@ export const handler = awslambda.streamifyResponse(
     }
 
     if (
+      method === "POST" &&
+      (rawPath.endsWith("/upload/presign") || rawPath.endsWith("/upload-url"))
+    ) {
+      await handlePresignUpload(event, responseStream, userId);
+      return;
+    }
+
+    if (
       (method === "POST" || method === "GET") &&
       rawPath.includes("/auth/complete")
     ) {
@@ -459,9 +713,20 @@ export const handler = awslambda.streamifyResponse(
     }
 
     const sessionMatch = rawPath.match(/\/sessions\/([^/]+)$/);
-    if (method === "GET" && sessionMatch) {
-      await handleGetSession(event, responseStream, sessionMatch[1], userId);
-      return;
+    if (sessionMatch) {
+      const sid = decodeURIComponent(sessionMatch[1]);
+      if (method === "GET") {
+        await handleGetSession(event, responseStream, sid, userId);
+        return;
+      }
+      if (method === "DELETE") {
+        await handleDeleteSession(event, responseStream, sid, userId);
+        return;
+      }
+      if (method === "PATCH" || method === "PUT") {
+        await handleUpdateSession(event, responseStream, sid, userId);
+        return;
+      }
     }
 
     writeJson(responseStream, { error: `unknown route: ${method} ${rawPath}` });

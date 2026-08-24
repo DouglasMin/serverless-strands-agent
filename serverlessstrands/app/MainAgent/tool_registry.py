@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 
@@ -21,6 +21,7 @@ class ToolFactorySet:
     office_tools: Callable[[], list[Any]] = lambda: []
     code_interpreter_tool: Callable[[], Any | None] = lambda: None
     browser_tools: Callable[[], list[Any]] = lambda: []
+    a2a_tools: Callable[[], list[Any]] = lambda: []
 
 
 def build_tools(
@@ -45,6 +46,9 @@ def build_tools(
         code_tool = factories.code_interpreter_tool()
         if code_tool:
             tools.append(code_tool)
+
+    if enabled(values, "ENABLE_A2A_TOOLS", True):
+        tools.extend(factories.a2a_tools())
 
     if enabled(values, "ENABLE_BROWSER_TOOLS", False):
         tools.extend(factories.browser_tools())

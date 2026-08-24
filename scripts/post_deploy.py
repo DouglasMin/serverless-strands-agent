@@ -170,6 +170,25 @@ def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None
                 "Action": "secretsmanager:GetSecretValue",
                 "Resource": langfuse_secret_arn(region),
             },
+            {
+                "Sid": "UserUploadsS3Read",
+                "Effect": "Allow",
+                "Action": ["s3:GetObject", "s3:ListBucket"],
+                "Resource": [
+                    "arn:aws:s3:::serverlessstrands-dev-user-uploads-*",
+                    "arn:aws:s3:::serverlessstrands-dev-user-uploads-*/*",
+                ],
+            },
+            {
+                "Sid": "AgentToAgentRuntimeInvocation",
+                "Effect": "Allow",
+                "Action": [
+                    "bedrock-agentcore:InvokeAgentRuntime",
+                    "bedrock-agentcore:GetAgentRuntime",
+                    "bedrock-agentcore:ListAgentRuntimes",
+                ],
+                "Resource": "*",
+            },
         ],
     }
 

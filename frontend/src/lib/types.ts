@@ -3,6 +3,27 @@ export interface SessionSummary {
   title: string | null;
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean;
+}
+
+export interface FileAttachment {
+  filename: string;
+  s3Uri: string;
+  key: string;
+  contentType: string;
+  sizeBytes: number;
+  uploading?: boolean;
+  error?: string;
+}
+
+export interface TraceInfo {
+  sessionId: string;
+  durationMs: number;
+  model: string;
+  toolsUsed: string[];
+  timestamp: number;
+  memoryEnabled?: boolean;
+  langfuseTraceId?: string;
 }
 
 export interface StoredMessage {
@@ -11,6 +32,8 @@ export interface StoredMessage {
   ts: number;
   routePreviews?: RoutePreview[];
   documents?: DocumentArtifact[];
+  attachments?: FileAttachment[];
+  trace?: TraceInfo;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -63,9 +86,12 @@ export interface ArtifactItem {
 
 export interface DocumentArtifact {
   filename: string;
-  fileType: "excel" | "word" | "powerpoint" | string;
-  sizeBytes: number;
-  dataUri: string;
+  fileType?: "excel" | "word" | "powerpoint" | string;
+  type?: string;
+  sizeBytes?: number;
+  dataUri?: string;
+  url?: string;
+  s3Uri?: string;
   summary?: string;
 }
 
@@ -82,6 +108,35 @@ export interface StockQuoteData {
   historicalPoints?: { time: string; price: number }[];
 }
 
+export interface SubAgentStep {
+  time: string;
+  tool?: string;
+  query?: string;
+  detail: string;
+}
+
+export interface SubAgentSource {
+  title: string;
+  url: string;
+  source: "web" | "arxiv" | "wikipedia" | string;
+  snippet?: string;
+  published?: string;
+  score?: number;
+}
+
+export interface SubAgentTask {
+  id: string;
+  agentName: string;
+  topic: string;
+  depth?: string;
+  status: "planning" | "searching" | "synthesizing" | "completed" | "error";
+  startTime: number;
+  endTime?: number;
+  steps: SubAgentStep[];
+  sources: SubAgentSource[];
+  summary?: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
@@ -89,6 +144,9 @@ export interface ChatMessage {
   routePreviews?: RoutePreview[];
   artifacts?: ArtifactItem[];
   documents?: DocumentArtifact[];
+  subagentTasks?: SubAgentTask[];
+  attachments?: FileAttachment[];
+  trace?: TraceInfo;
 }
 
 export type StreamEvent =
@@ -97,7 +155,9 @@ export type StreamEvent =
   | { type: "tool_use"; name: string }
   | { type: "route_preview"; preview: RoutePreview }
   | { type: "document_artifact"; document: DocumentArtifact }
+  | { type: "subagent_event"; subagent: any }
   | { type: "auth_url"; url: string }
+  | { type: "trace"; trace: TraceInfo }
   | { type: "done"; sessionId: string }
   | { type: "error"; message: string }
   | { type: "warn"; message: string };

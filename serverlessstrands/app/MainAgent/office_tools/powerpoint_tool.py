@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import re
 from typing import Any
 
 from pptx import Presentation
@@ -46,61 +47,149 @@ def _create_slide_background(
     return bg_shape
 
 
+def _parse_markdown_to_slides(md_text: str) -> list[dict[str, Any]]:
+    """Parse a Markdown text presentation into structured slide objects."""
+    raw_slides = re.split(r"\n---\n|\n===\n", md_text)
+    slides: list[dict[str, Any]] = []
+
+    for raw in raw_slides:
+        raw = raw.strip()
+        if not raw:
+            continue
+
+        lines = [l.strip() for l in raw.split("\n") if l.strip()]
+        if not lines:
+            continue
+
+        title = "Key Insights"
+        content_lines: list[str] = []
+
+        for line in lines:
+            if line.startswith("# ") or line.startswith("## ") or line.startswith("### "):
+                title = re.sub(r"^#+\s*", "", line).strip()
+            else:
+                content_lines.append(line)
+
+        # Check for stats layout (lines like `> 99.9% : Uptime` or `**$50B** - Market Size` or `99.9% | Uptime`)
+        stat_matches = []
+        for cl in content_lines:
+            stat_m = re.search(r"(\$?\d+[\d,\.]*[%kKmMbBtT]?|\b[A-Z0-9\.\+-]+%)\s*[:\|\-–—]\s*([A-Za-z0-9\s,\./]+)", cl)
+            if stat_m:
+                val = stat_m.group(1).strip()
+                lbl = stat_m.group(2).strip()
+                stat_matches.append({"value": val, "label": lbl})
+
+        if len(stat_matches) >= 2 and len(stat_matches) == len(content_lines):
+            slides.append({
+                "type": "stats",
+                "title": title,
+                "stats": stat_matches[:4],
+            })
+            continue
+
+        # Check for two-column layout (presence of two subheadings or distinct blocks)
+        subheadings = [i for i, l in enumerate(content_lines) if l.startswith("#### ") or l.startswith("**") and l.endswith("**")]
+        if len(subheadings) == 2:
+            idx1, idx2 = subheadings[0], subheadings[1]
+            head1 = content_lines[idx1].replace("**", "").replace("####", "").strip()
+            head2 = content_lines[idx2].replace("**", "").replace("####", "").strip()
+            b1 = [re.sub(r"^[-*\d\.]+\s*", "", l) for l in content_lines[idx1 + 1 : idx2] if l.startswith("- ") or l.startswith("* ") or re.match(r"^\d+\.", l)]
+            b2 = [re.sub(r"^[-*\d\.]+\s*", "", l) for l in content_lines[idx2 + 1 :] if l.startswith("- ") or l.startswith("* ") or re.match(r"^\d+\.", l)]
+            if b1 and b2:
+                slides.append({
+                    "type": "two_column",
+                    "title": title,
+                    "col1_title": head1,
+                    "col1_bullets": b1,
+                    "col2_title": head2,
+                    "col2_bullets": b2,
+                })
+                continue
+
+        # Default bullets layout
+        bullets = []
+        for cl in content_lines:
+            clean_bullet = re.sub(r"^[-*>\d\.]+\s*", "", cl).strip()
+            if clean_bullet:
+                bullets.append(clean_bullet)
+
+        slides.append({
+            "type": "bullets",
+            "title": title,
+            "bullets": bullets or ["Key strategic takeaway."],
+        })
+
+    return slides
+
+
 @tool
 def create_powerpoint_presentation(
     filename: str,
-    title: str,
-    subtitle: str,
-    slides_json: str,
+    title: str = "Executive Briefing",
+    subtitle: str = "",
+    slides_json: str | None = None,
+    content: str | None = None,
     theme: str = "dark",
 ) -> str:
     """Create a modern 16:9 widescreen PowerPoint (.pptx) presentation with formatted slide layouts.
 
+    Supports either structured slides_json OR direct Markdown content string (slides delimited by ---).
+
     filename: Name of the file, e.g. "Platform_Pitch.pptx"
-    title: Main title of the presentation
+    title: Main title of the presentation (Title Slide)
     subtitle: Subtitle for the title slide
     theme: "dark" or "light" (default: "dark")
-    slides_json: JSON string representing slides. Example:
+    content: Raw Markdown slides text with slides separated by '---'
+    slides_json: Optional JSON string representing slides. Example:
     [
       {
         "type": "bullets",
         "title": "Platform Highlights",
-        "bullets": [
-          "Low-latency streaming responses across ap-northeast-2",
-          "Automated Python code execution sandbox",
-          "Deep integration with GitHub, Notion, and Google Maps"
-        ]
+        "bullets": ["Low latency", "Code Sandbox", "Deep integrations"]
       },
       {
         "type": "stats",
-        "title": "Key Performance Metrics",
-        "stats": [
-          {"value": "99.95%", "label": "Uptime SLA"},
-          {"value": "< 180ms", "label": "Execution Latency"},
-          {"value": "100%", "label": "Serverless Architecture"}
-        ]
+        "title": "Key Metrics",
+        "stats": [{"value": "99.95%", "label": "Uptime"}, {"value": "<180ms", "label": "Latency"}]
       },
       {
         "type": "two_column",
-        "title": "Architecture Comparison",
-        "col1_title": "Traditional Stack",
-        "col1_bullets": ["Static server instances", "Idle costs", "Manual maintenance"],
-        "col2_title": "Serverless Strands Agent",
-        "col2_bullets": ["Scale-to-zero compute", "Token-based pricing", "Automated Token Vault"]
+        "title": "Comparison",
+        "col1_title": "Before",
+        "col1_bullets": ["Manual", "Slow"],
+        "col2_title": "After",
+        "col2_bullets": ["Automated", "Fast"]
       }
     ]
     """
     if not filename.endswith(".pptx"):
         filename += ".pptx"
 
-    try:
-        slides_data = json.loads(slides_json)
-        if isinstance(slides_data, dict):
-            slides_data = [slides_data]
-    except Exception as err:
-        return json.dumps(
-            {"error": f"Invalid slides_json parameter: {err}"}, indent=2
-        )
+    slides_data: list[dict[str, Any]] = []
+
+    # 1. Try parsing direct Markdown content if provided
+    if content and isinstance(content, str) and content.strip():
+        slides_data = _parse_markdown_to_slides(content)
+    # 2. Try parsing slides_json
+    elif slides_json and isinstance(slides_json, str) and slides_json.strip():
+        try:
+            parsed = json.loads(slides_json)
+            if isinstance(parsed, list):
+                slides_data = parsed
+            elif isinstance(parsed, dict):
+                slides_data = [parsed]
+        except Exception:
+            # Fallback: treat slides_json as raw markdown
+            slides_data = _parse_markdown_to_slides(slides_json)
+
+    if not slides_data:
+        slides_data = [
+            {
+                "type": "bullets",
+                "title": title,
+                "bullets": ["Executive summary and strategic findings."],
+            }
+        ]
 
     prs = Presentation()
     # Set 16:9 widescreen dimensions

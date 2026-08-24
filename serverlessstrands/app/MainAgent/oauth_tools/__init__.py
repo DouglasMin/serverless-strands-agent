@@ -107,7 +107,11 @@ def _get_workload_token() -> Optional[str]:
         return None
 
 
-def get_oauth_token(provider_name: str, scopes: list[str]) -> dict:
+def get_oauth_token(
+    provider_name: str,
+    scopes: list[str],
+    force_auth: bool = False,
+) -> dict:
     """Get OAuth token from AgentCore Identity.
 
     Returns dict with either:
@@ -127,11 +131,17 @@ def get_oauth_token(provider_name: str, scopes: list[str]) -> dict:
             oauth2Flow="USER_FEDERATION",
             workloadIdentityToken=workload_token,
             resourceOauth2ReturnUrl=_CALLBACK_URL,
-            forceAuthentication=False,
+            forceAuthentication=force_auth,
         )
     except Exception as e:
-        logger.error(f"[OAuth] get_resource_oauth2_token failed: {e}")
+        logger.error(f"[OAuth] get_resource_oauth2_token (force={force_auth}) failed: {e}")
         return {"error": str(e)}
+
+    if force_auth:
+        if "authorizationUrl" in response:
+            return {"auth_url": response["authorizationUrl"]}
+        if "accessToken" in response:
+            return {"token": response["accessToken"]}
 
     if "accessToken" in response:
         return {"token": response["accessToken"]}
