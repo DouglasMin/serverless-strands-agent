@@ -10,7 +10,7 @@ from office_tools import (
 )
 
 
-def test_create_excel_spreadsheet():
+def test_create_excel_spreadsheet_json():
     q: queue.Queue = queue.Queue()
     token = set_document_queue(q)
     try:
@@ -27,7 +27,7 @@ def test_create_excel_spreadsheet():
             }
         ])
 
-        res_str = create_excel_spreadsheet("Financial_Report.xlsx", sheets_json)
+        res_str = create_excel_spreadsheet("Financial_Report.xlsx", sheets_json=sheets_json)
         res = json.loads(res_str)
 
         assert res["status"] == "success"
@@ -42,6 +42,35 @@ def test_create_excel_spreadsheet():
         assert event["filename"] == "Financial_Report.xlsx"
         assert event["file_type"] == "excel"
         assert event["data_uri"].startswith("data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,")
+    finally:
+        reset_document_queue(token)
+
+
+def test_create_excel_spreadsheet_markdown():
+    q: queue.Queue = queue.Queue()
+    token = set_document_queue(q)
+    try:
+        md_tables = """
+## Regional Sales
+| Region | Q1 Units | Q2 Units | Total Revenue |
+| :--- | :--- | :--- | :--- |
+| North America | 45000 | 52000 | $12,500,000 |
+| Europe | 38000 | 41000 | $9,800,000 |
+| Asia Pacific | 62000 | 71000 | $16,400,000 |
+| Total | 145000 | 164000 | $38,700,000 |
+"""
+        res_str = create_excel_spreadsheet("Sales_Model.xlsx", content=md_tables)
+        res = json.loads(res_str)
+
+        assert res["status"] == "success"
+        assert res["filename"] == "Sales_Model.xlsx"
+        assert res["file_type"] == "excel"
+        assert res["sheets_count"] == 1
+        assert res["size_bytes"] > 100
+
+        assert not q.empty()
+        event = q.get_nowait()
+        assert event["filename"] == "Sales_Model.xlsx"
     finally:
         reset_document_queue(token)
 
@@ -63,7 +92,7 @@ def test_create_word_document():
             {"type": "callout", "text": "Security note: Token Vault enabled."},
         ])
 
-        res_str = create_word_document("Architecture_Review.docx", "Architecture Review", sections_json)
+        res_str = create_word_document("Architecture_Review.docx", "Architecture Review", sections_json=sections_json)
         res = json.loads(res_str)
 
         assert res["status"] == "success"
@@ -81,7 +110,35 @@ def test_create_word_document():
         reset_document_queue(token)
 
 
-def test_create_powerpoint_presentation():
+def test_create_word_document_markdown():
+    q: queue.Queue = queue.Queue()
+    token = set_document_queue(q)
+    try:
+        md_text = """
+# Executive AI Strategy
+> Confidential Board Memo
+
+## 1. Key Highlights
+- **99.9%** availability across multi-runtime nodes
+- Integrated AgentCore Identity 3LO
+
+| Metric | Target | Status |
+| :--- | :--- | :--- |
+| Latency | <200ms | Met |
+| Cost | -70% | Exceeded |
+"""
+        res_str = create_word_document("AI_Strategy.docx", "AI Strategy", content=md_text)
+        res = json.loads(res_str)
+
+        assert res["status"] == "success"
+        assert res["filename"] == "AI_Strategy.docx"
+        assert res["file_type"] == "word"
+        assert res["size_bytes"] > 100
+    finally:
+        reset_document_queue(token)
+
+
+def test_create_powerpoint_presentation_json():
     q: queue.Queue = queue.Queue()
     token = set_document_queue(q)
     try:
@@ -106,7 +163,7 @@ def test_create_powerpoint_presentation():
             },
         ])
 
-        res_str = create_powerpoint_presentation("Pitch_Deck.pptx", "Platform Pitch", "Q3 2026 Overview", slides_json, theme="dark")
+        res_str = create_powerpoint_presentation("Pitch_Deck.pptx", "Platform Pitch", "Q3 2026 Overview", slides_json=slides_json, theme="dark")
         res = json.loads(res_str)
 
         assert res["status"] == "success"
@@ -121,5 +178,42 @@ def test_create_powerpoint_presentation():
         assert event["filename"] == "Pitch_Deck.pptx"
         assert event["file_type"] == "powerpoint"
         assert event["data_uri"].startswith("data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,")
+    finally:
+        reset_document_queue(token)
+
+
+def test_create_powerpoint_presentation_markdown():
+    q: queue.Queue = queue.Queue()
+    token = set_document_queue(q)
+    try:
+        md_slides = """
+# Executive Pitch Deck
+---
+## Market Opportunity
+- Rapidly expanding enterprise AI agent ecosystem
+- Demand for secure, stateless serverless runtimes
+- Complete elimination of idle compute overhead
+---
+## Performance Benchmarks
+99.95% : Production Uptime SLA
+<150ms : End-to-End Latency
+$0.00 : Idle Infrastructure Cost
+---
+## Strategic Roadmap
+#### Phase 1: Core Network
+- Deploy AgentCore Runtime Gateways
+- Multi-region failover
+#### Phase 2: Autonomous Agents
+- Autonomous Deep Research
+- Real-time multimodal synthesis
+"""
+        res_str = create_powerpoint_presentation("Investor_Deck.pptx", "Investor Deck", "2026 Strategy", content=md_slides)
+        res = json.loads(res_str)
+
+        assert res["status"] == "success"
+        assert res["filename"] == "Investor_Deck.pptx"
+        assert res["file_type"] == "powerpoint"
+        assert res["slides_count"] >= 3
+        assert res["size_bytes"] > 100
     finally:
         reset_document_queue(token)

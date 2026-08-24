@@ -13,6 +13,17 @@ const DAY = 86_400;
 export function groupByRecency(sessions: SessionSummary[]): SessionGroup[] {
   if (sessions.length === 0) return [];
 
+  const pinned: SessionSummary[] = [];
+  const nonPinned: SessionSummary[] = [];
+
+  for (const s of sessions) {
+    if (s.pinned) {
+      pinned.push(s);
+    } else {
+      nonPinned.push(s);
+    }
+  }
+
   const todayStart = startOfDay(Date.now() / 1000);
   const yesterdayStart = todayStart - DAY;
   const weekStart = todayStart - 7 * DAY;
@@ -24,7 +35,7 @@ export function groupByRecency(sessions: SessionSummary[]): SessionGroup[] {
   const month: SessionSummary[] = [];
   const older: SessionSummary[] = [];
 
-  for (const s of sessions) {
+  for (const s of nonPinned) {
     const t = s.updatedAt;
     if (t >= todayStart) today.push(s);
     else if (t >= yesterdayStart) yesterday.push(s);
@@ -34,6 +45,7 @@ export function groupByRecency(sessions: SessionSummary[]): SessionGroup[] {
   }
 
   const out: SessionGroup[] = [];
+  if (pinned.length) out.push({ label: "pinned", items: pinned });
   if (today.length) out.push({ label: "today", items: today });
   if (yesterday.length) out.push({ label: "yesterday", items: yesterday });
   if (week.length) out.push({ label: "last 7 days", items: week });

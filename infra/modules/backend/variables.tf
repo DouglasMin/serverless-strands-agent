@@ -18,6 +18,18 @@ variable "agent_runtime_arn" {
   type = string
 }
 
+variable "uploads_bucket" {
+  description = "Name of the S3 bucket for user uploads"
+  type        = string
+  default     = ""
+}
+
+variable "uploads_bucket_arn" {
+  description = "ARN of the S3 bucket for user uploads"
+  type        = string
+  default     = ""
+}
+
 variable "log_retention_days" {
   type    = number
   default = 14

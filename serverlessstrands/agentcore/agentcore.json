@@ -42,6 +42,41 @@
         {
           "name": "WORKLOAD_NAME",
           "value": "serverlessstrands_MainAgent-4l0O95618E"
+        },
+        {
+          "name": "DEEP_RESEARCH_RUNTIME_ARN",
+          "value": "arn:aws:bedrock-agentcore:ap-northeast-2:612529367436:runtime/serverlessstrands_DeepResearchAgent-fNxJzC68TQ"
+        }
+      ],
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP"
+    },
+    {
+      "name": "DeepResearchAgent",
+      "build": "Container",
+      "entrypoint": "main.py",
+      "codeLocation": "app/DeepResearchAgent/",
+      "runtimeVersion": "PYTHON_3_14",
+      "envVars": [
+        {
+          "name": "DISABLE_ADOT_OBSERVABILITY",
+          "value": "true"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "prod"
+        },
+        {
+          "name": "LANGFUSE_SECRET_ID",
+          "value": "serverlessstrands/langfuse"
+        },
+        {
+          "name": "OTEL_SERVICE_NAME",
+          "value": "serverlessstrands-deepresearchagent"
+        },
+        {
+          "name": "WORKLOAD_NAME",
+          "value": "serverlessstrands_DeepResearchAgent"
         }
       ],
       "networkMode": "PUBLIC",

@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import re
 from typing import Any
 
 from docx import Document
@@ -17,43 +18,159 @@ def _set_cell_background(cell: Any, fill_hex: str):
     cell._tc.get_or_add_tcPr().append(shading_elm)
 
 
+def _add_styled_runs_to_paragraph(p: Any, text: str, default_font_size: Pt = Pt(11), default_color: RGBColor = RGBColor(0x1E, 0x29, 0x3B)):
+    """Parse inline **bold** and *italic* markdown spans and append runs to paragraph."""
+    # Split by bold **...**
+    parts = re.split(r"(\*\*.*?\*\*)", text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) >= 4:
+            clean = part[2:-2]
+            r = p.add_run(clean)
+            r.font.name = "Calibri"
+            r.font.size = default_font_size
+            r.font.bold = True
+            r.font.color.rgb = default_color
+        else:
+            # Check for *italic*
+            subparts = re.split(r"(\*.*?\*)", part)
+            for sub in subparts:
+                if not sub:
+                    continue
+                if sub.startswith("*") and sub.endswith("*") and len(sub) >= 2:
+                    r = p.add_run(sub[1:-1])
+                    r.font.name = "Calibri"
+                    r.font.size = default_font_size
+                    r.font.italic = True
+                    r.font.color.rgb = default_color
+                else:
+                    r = p.add_run(sub)
+                    r.font.name = "Calibri"
+                    r.font.size = default_font_size
+                    r.font.color.rgb = default_color
+
+
+def _parse_markdown_to_sections(md_text: str) -> list[dict[str, Any]]:
+    """Parse a markdown research dossier into structured Word sections."""
+    sections: list[dict[str, Any]] = []
+    lines = md_text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        if line.startswith("# "):
+            sections.append({"type": "heading_1", "text": line[2:].strip()})
+            i += 1
+        elif line.startswith("## "):
+            sections.append({"type": "heading_1", "text": line[3:].strip()})
+            i += 1
+        elif line.startswith("### ") or line.startswith("#### "):
+            clean = re.sub(r"^#+\s*", "", line)
+            sections.append({"type": "heading_2", "text": clean.strip()})
+            i += 1
+        elif line.startswith("> "):
+            sections.append({"type": "callout", "text": line[2:].strip()})
+            i += 1
+        elif line.startswith("- ") or line.startswith("* ") or re.match(r"^\d+\.\s", line):
+            items = []
+            while i < len(lines):
+                bline = lines[i].strip()
+                if bline.startswith("- ") or bline.startswith("* "):
+                    items.append(bline[2:].strip())
+                    i += 1
+                elif re.match(r"^\d+\.\s", bline):
+                    items.append(re.sub(r"^\d+\.\s*", "", bline).strip())
+                    i += 1
+                elif not bline:
+                    i += 1
+                    break
+                else:
+                    break
+            if items:
+                sections.append({"type": "bullet_list", "items": items})
+        elif line.startswith("|") and "|" in line[1:]:
+            # Parse markdown table
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table_lines.append(lines[i].strip())
+                i += 1
+            if len(table_lines) >= 2:
+                headers = [c.strip() for c in table_lines[0].split("|")[1:-1]]
+                data_start = 1
+                if "---" in table_lines[1] or ":---" in table_lines[1]:
+                    data_start = 2
+                rows = []
+                for tline in table_lines[data_start:]:
+                    cells = [c.strip() for c in tline.split("|")[1:-1]]
+                    rows.append(cells)
+                sections.append({"type": "table", "headers": headers, "rows": rows})
+        else:
+            para_lines = []
+            while i < len(lines):
+                pline = lines[i].strip()
+                if (
+                    not pline
+                    or pline.startswith("#")
+                    or pline.startswith("|")
+                    or pline.startswith("- ")
+                    or pline.startswith("* ")
+                    or pline.startswith("> ")
+                    or re.match(r"^\d+\.\s", pline)
+                ):
+                    break
+                para_lines.append(pline)
+                i += 1
+            if para_lines:
+                sections.append({"type": "paragraph", "text": " ".join(para_lines)})
+
+    return sections
+
+
 @tool
 def create_word_document(
-    filename: str, title: str, sections_json: str
+    filename: str,
+    title: str,
+    sections_json: str = "",
+    content: str = "",
 ) -> str:
     """Create a formatted Microsoft Word (.docx) document with styled headings, paragraphs, bullet lists, tables, and callouts.
 
-    filename: Name of the file, e.g. "Architecture_Report.docx"
-    title: Document main title
-    sections_json: JSON string representing sections. Example:
-    [
-      {"type": "subtitle", "text": "A comprehensive analysis of cloud architecture"},
-      {"type": "heading_1", "text": "1. Executive Summary"},
-      {"type": "paragraph", "text": "This report details our serverless infrastructure..."},
-      {"type": "bullet_list", "items": ["Key Point 1", "Key Point 2", "Key Point 3"]},
-      {"type": "heading_2", "text": "2. Component Breakdown"},
-      {
-        "type": "table",
-        "headers": ["Component", "Technology", "Status"],
-        "rows": [
-          ["Runtime", "AWS Bedrock AgentCore", "Production"],
-          ["Language Model", "Anthropic Claude 3.7", "Active"]
-        ]
-      },
-      {"type": "callout", "text": "Note: Security credentials are encrypted in AWS Token Vault."}
-    ]
+    Args:
+        filename: Name of the file, e.g. "Humanoid_Robotics_Report.docx"
+        title: Document main title
+        sections_json: Optional JSON string representing structured sections.
+        content: Optional raw Markdown text or report body (automatically parsed into headings, tables, bullets, and paragraphs).
     """
     if not filename.endswith(".docx"):
         filename += ".docx"
 
-    try:
-        sections = json.loads(sections_json)
-        if isinstance(sections, dict):
-            sections = [sections]
-    except Exception as err:
-        return json.dumps(
-            {"error": f"Invalid sections_json parameter: {err}"}, indent=2
-        )
+    sections: list[dict[str, Any]] = []
+
+    # 1. Try parsing sections_json
+    if sections_json and sections_json.strip():
+        try:
+            parsed = json.loads(sections_json)
+            if isinstance(parsed, list):
+                sections = parsed
+            elif isinstance(parsed, dict):
+                sections = [parsed]
+        except Exception:
+            # If JSON parsing failed, treat sections_json as markdown
+            sections = _parse_markdown_to_sections(sections_json)
+
+    # 2. If no sections from JSON, try markdown content
+    if not sections and content and content.strip():
+        sections = _parse_markdown_to_sections(content)
+
+    if not sections:
+        sections = [
+            {"type": "heading_1", "text": title},
+            {"type": "paragraph", "text": "Document generated successfully."},
+        ]
 
     doc = Document()
 
@@ -71,11 +188,11 @@ def create_word_document(
     title_run.font.size = Pt(24)
     title_run.font.bold = True
     title_run.font.color.rgb = RGBColor(0x1E, 0x3A, 0x8A)
-    title_p.paragraph_format.space_after = Pt(4)
+    title_p.paragraph_format.space_after = Pt(8)
 
     for s in sections:
         stype = s.get("type", "paragraph")
-        text = s.get("text", "")
+        text = str(s.get("text", ""))
 
         if stype == "subtitle":
             p = doc.add_paragraph()
@@ -108,10 +225,7 @@ def create_word_document(
 
         elif stype == "paragraph":
             p = doc.add_paragraph()
-            r = p.add_run(text)
-            r.font.name = "Calibri"
-            r.font.size = Pt(11)
-            r.font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
+            _add_styled_runs_to_paragraph(p, text, default_font_size=Pt(11))
             p.paragraph_format.line_spacing = 1.15
             p.paragraph_format.space_after = Pt(6)
 
@@ -119,10 +233,7 @@ def create_word_document(
             items = s.get("items", [])
             for item in items:
                 p = doc.add_paragraph(style="List Bullet")
-                r = p.add_run(str(item))
-                r.font.name = "Calibri"
-                r.font.size = Pt(11)
-                r.font.color.rgb = RGBColor(0x1E, 0x29, 0x3B)
+                _add_styled_runs_to_paragraph(p, str(item), default_font_size=Pt(11))
                 p.paragraph_format.space_after = Pt(3)
 
         elif stype == "callout":

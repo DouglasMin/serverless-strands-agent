@@ -1,8 +1,9 @@
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from strands import tool
 from temporal_context import APP_TIMEZONE_NAME, local_now
@@ -11,6 +12,38 @@ from oauth_tools import get_oauth_token, auth_url_queue
 PROVIDER_NAME = "google-calendar-provider"
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_API = "https://www.googleapis.com/calendar/v3"
+
+
+class GCalAuthRequired(Exception):
+    """Raised when Google Calendar requires authorization or token is expired."""
+    def __init__(self, auth_url: str):
+        self.auth_url = auth_url
+        super().__init__(f"Google Calendar authorization required: {auth_url}")
+
+
+def _get_token_or_auth_url(force_auth: bool = False) -> tuple[str | None, str | None]:
+    result = get_oauth_token(PROVIDER_NAME, SCOPES, force_auth=force_auth)
+    if force_auth:
+        if "auth_url" in result:
+            return None, result["auth_url"]
+        if "token" in result:
+            return result["token"], None
+
+    if "token" in result:
+        return result["token"], None
+    if "auth_url" in result:
+        return None, result["auth_url"]
+    return None, None
+
+
+def _handle_auth(auth_url: str) -> str:
+    auth_url_queue.put_nowait(auth_url)
+    return (
+        f"🔐 **Google Calendar Authorization Required**\n\n"
+        f"To view and manage your live Google Calendar, please connect your account:\n\n"
+        f"👉 **[Click here to Authorize Google Calendar]({auth_url})**\n\n"
+        f"*(A sign-in popup was also requested. After completing authorization, please ask again!)*"
+    )
 
 
 def _gcal_request(
@@ -31,25 +64,46 @@ def _gcal_request(
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(req) as resp:
-        raw = resp.read()
-        if not raw:
-            return {}
-        return json.loads(raw)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read()
+            if not raw:
+                return {}
+            return json.loads(raw)
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403):
+            # Expired or invalidated token at Google. Force fresh re-authentication!
+            _, force_url = _get_token_or_auth_url(force_auth=True)
+            if force_url:
+                raise GCalAuthRequired(force_url)
+            raise ValueError(f"Google Calendar authorization expired (HTTP {err.code}: {err.reason}). Please re-authorize.")
+        raise
 
 
-def _get_token_or_auth_url() -> tuple[str | None, str | None]:
-    result = get_oauth_token(PROVIDER_NAME, SCOPES)
-    if "token" in result:
-        return result["token"], None
-    if "auth_url" in result:
-        return None, result["auth_url"]
-    return None, None
+def _run_gcal_op(action_fn: Callable[[str], str]) -> str:
+    """Execute a Google Calendar operation with automatic token resolution and re-auth handling."""
+    token, auth_url = _get_token_or_auth_url()
+    if auth_url:
+        return _handle_auth(auth_url)
+    if not token:
+        _, force_url = _get_token_or_auth_url(force_auth=True)
+        if force_url:
+            return _handle_auth(force_url)
+        return "Failed to get Google Calendar token. Please authorize Google Calendar."
 
-
-def _handle_auth(auth_url: str) -> str:
-    auth_url_queue.put_nowait(auth_url)
-    return "Google Calendar authorization required. A login popup has been sent to the user. Please wait for them to complete authorization and try again."
+    try:
+        return action_fn(token)
+    except GCalAuthRequired as err:
+        return _handle_auth(err.auth_url)
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403):
+            _, force_url = _get_token_or_auth_url(force_auth=True)
+            if force_url:
+                return _handle_auth(force_url)
+            return f"Google Calendar token expired (HTTP {err.code}: {err.reason}). Please re-authorize."
+        return f"Google Calendar API Error (HTTP {err.code}: {err.reason})"
+    except Exception as err:
+        return f"Google Calendar Error: {err}"
 
 
 def _format_event(ev: dict) -> dict:
@@ -178,23 +232,20 @@ def google_calendar_date_info(date_str: str) -> str:
 @tool
 def google_calendar_list_calendars() -> str:
     """List all calendars accessible to the user (primary, subscribed, shared)."""
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        data = _gcal_request("/users/me/calendarList", token)
+        results = []
+        for cal in data.get("items", []):
+            results.append({
+                "id": cal.get("id"),
+                "summary": cal.get("summary"),
+                "primary": cal.get("primary", False),
+                "accessRole": cal.get("accessRole"),
+                "timeZone": cal.get("timeZone"),
+            })
+        return json.dumps(results, indent=2, ensure_ascii=False)
 
-    data = _gcal_request("/users/me/calendarList", token)
-    results = []
-    for cal in data.get("items", []):
-        results.append({
-            "id": cal.get("id"),
-            "summary": cal.get("summary"),
-            "primary": cal.get("primary", False),
-            "accessRole": cal.get("accessRole"),
-            "timeZone": cal.get("timeZone"),
-        })
-    return json.dumps(results, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -211,19 +262,15 @@ def google_calendar_list_events(
     max_results: Maximum events to return (max 50).
     query: Free text search across event titles, descriptions, locations.
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
+        if query:
+            params["q"] = query
+        data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
+        results = [_format_event(ev) for ev in data.get("items", [])]
+        return json.dumps(results, indent=2, ensure_ascii=False)
 
-    params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
-    if query:
-        params["q"] = query
-
-    data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
-    results = [_format_event(ev) for ev in data.get("items", [])]
-    return json.dumps(results, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -241,54 +288,44 @@ def google_calendar_find_events_with_location(
     max_results: Maximum events to inspect, capped at 50.
     query: Optional text search across event title, description, and location.
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
+        if query:
+            params["q"] = query
+        data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
+        return json.dumps(
+            _events_with_locations(data.get("items", [])),
+            indent=2,
+            ensure_ascii=False,
+        )
 
-    params = _calendar_window_params(days_ahead=days_ahead, max_results=max_results)
-    if query:
-        params["q"] = query
-
-    data = _gcal_request(f"/calendars/{calendar_id}/events", token, params=params)
-    return json.dumps(
-        _events_with_locations(data.get("items", [])),
-        indent=2,
-        ensure_ascii=False,
-    )
+    return _run_gcal_op(_op)
 
 
 @tool
 def google_calendar_today(calendar_id: str = "primary") -> str:
     """Get today's Google Calendar events."""
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        data = _gcal_request(
+            f"/calendars/{calendar_id}/events", token,
+            params=_today_window_params(),
+        )
+        results = [_format_event(ev) for ev in data.get("items", [])]
+        if not results:
+            return "No events scheduled for today."
+        return json.dumps(results, indent=2, ensure_ascii=False)
 
-    data = _gcal_request(
-        f"/calendars/{calendar_id}/events", token,
-        params=_today_window_params(),
-    )
-    results = [_format_event(ev) for ev in data.get("items", [])]
-    if not results:
-        return "No events scheduled for today."
-    return json.dumps(results, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
 def google_calendar_get_event(event_id: str, calendar_id: str = "primary") -> str:
     """Get full details of a specific calendar event by its ID."""
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        ev = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
+        return json.dumps(_format_event(ev), indent=2, ensure_ascii=False)
 
-    ev = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
-    return json.dumps(_format_event(ev), indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -302,28 +339,25 @@ def google_calendar_check_availability(
     calendar_ids: Comma-separated calendar IDs to check. Default: "primary".
     time_zone: Timezone (e.g. Asia/Seoul).
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
-
-    ids = [c.strip() for c in calendar_ids.split(",") if c.strip()]
-    body = {
-        "timeMin": time_min,
-        "timeMax": time_max,
-        "timeZone": time_zone,
-        "items": [{"id": cid} for cid in ids],
-    }
-    data = _gcal_request("/freeBusy", token, method="POST", body=body)
-    results = {}
-    for cal_id, cal_data in data.get("calendars", {}).items():
-        busy = cal_data.get("busy", [])
-        results[cal_id] = {
-            "busy_slots": [{"start": s["start"], "end": s["end"]} for s in busy],
-            "busy_count": len(busy),
+    def _op(token: str) -> str:
+        ids = [c.strip() for c in calendar_ids.split(",") if c.strip()]
+        body = {
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "timeZone": time_zone,
+            "items": [{"id": cid} for cid in ids],
         }
-    return json.dumps(results, indent=2, ensure_ascii=False)
+        data = _gcal_request("/freeBusy", token, method="POST", body=body)
+        results = {}
+        for cal_id, cal_data in data.get("calendars", {}).items():
+            busy = cal_data.get("busy", [])
+            results[cal_id] = {
+                "busy_slots": [{"start": s["start"], "end": s["end"]} for s in busy],
+                "busy_count": len(busy),
+            }
+        return json.dumps(results, indent=2, ensure_ascii=False)
+
+    return _run_gcal_op(_op)
 
 
 # ── Write Tools ──────────────────────────────────────────────────────
@@ -353,34 +387,31 @@ def google_calendar_create_event(
     time_zone: Timezone (default Asia/Seoul).
     all_day: If true, use date format YYYY-MM-DD for start/end.
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        event: dict[str, Any] = {"summary": summary}
+        if description:
+            event["description"] = description
+        if location:
+            event["location"] = location
 
-    event: dict[str, Any] = {"summary": summary}
-    if description:
-        event["description"] = description
-    if location:
-        event["location"] = location
+        if all_day:
+            event["start"] = {"date": start_time}
+            event["end"] = {"date": end_time}
+        else:
+            event["start"] = {"dateTime": start_time, "timeZone": time_zone}
+            event["end"] = {"dateTime": end_time, "timeZone": time_zone}
 
-    if all_day:
-        event["start"] = {"date": start_time}
-        event["end"] = {"date": end_time}
-    else:
-        event["start"] = {"dateTime": start_time, "timeZone": time_zone}
-        event["end"] = {"dateTime": end_time, "timeZone": time_zone}
+        if attendees:
+            event["attendees"] = [
+                {"email": e.strip()} for e in attendees.split(",") if e.strip()
+            ]
 
-    if attendees:
-        event["attendees"] = [
-            {"email": e.strip()} for e in attendees.split(",") if e.strip()
-        ]
+        result = _gcal_request(
+            f"/calendars/{calendar_id}/events", token, method="POST", body=event,
+        )
+        return json.dumps({"created": _format_event(result)}, indent=2, ensure_ascii=False)
 
-    result = _gcal_request(
-        f"/calendars/{calendar_id}/events", token, method="POST", body=event,
-    )
-    return json.dumps({"created": _format_event(result)}, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -392,17 +423,14 @@ def google_calendar_quick_add(text: str, calendar_id: str = "primary") -> str:
     text: Natural language event description.
     calendar_id: Calendar to add to. Default "primary".
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        result = _gcal_request(
+            f"/calendars/{calendar_id}/events/quickAdd", token,
+            method="POST", params={"text": text},
+        )
+        return json.dumps({"created": _format_event(result)}, indent=2, ensure_ascii=False)
 
-    result = _gcal_request(
-        f"/calendars/{calendar_id}/events/quickAdd", token,
-        method="POST", params={"text": text},
-    )
-    return json.dumps({"created": _format_event(result)}, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -427,31 +455,28 @@ def google_calendar_update_event(
     location: New location. Leave empty to keep current.
     time_zone: Timezone for new times. Leave empty to keep current.
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        existing = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
 
-    existing = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
+        if summary:
+            existing["summary"] = summary
+        if description:
+            existing["description"] = description
+        if location:
+            existing["location"] = location
+        if start_time:
+            tz = time_zone or existing.get("start", {}).get("timeZone", "UTC")
+            existing["start"] = {"dateTime": start_time, "timeZone": tz}
+        if end_time:
+            tz = time_zone or existing.get("end", {}).get("timeZone", "UTC")
+            existing["end"] = {"dateTime": end_time, "timeZone": tz}
 
-    if summary:
-        existing["summary"] = summary
-    if description:
-        existing["description"] = description
-    if location:
-        existing["location"] = location
-    if start_time:
-        tz = time_zone or existing.get("start", {}).get("timeZone", "UTC")
-        existing["start"] = {"dateTime": start_time, "timeZone": tz}
-    if end_time:
-        tz = time_zone or existing.get("end", {}).get("timeZone", "UTC")
-        existing["end"] = {"dateTime": end_time, "timeZone": tz}
+        result = _gcal_request(
+            f"/calendars/{calendar_id}/events/{event_id}", token, method="PUT", body=existing,
+        )
+        return json.dumps({"updated": _format_event(result)}, indent=2, ensure_ascii=False)
 
-    result = _gcal_request(
-        f"/calendars/{calendar_id}/events/{event_id}", token, method="PUT", body=existing,
-    )
-    return json.dumps({"updated": _format_event(result)}, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -468,25 +493,22 @@ def google_calendar_set_event_reminder(
     method: "popup" or "email".
     calendar_id: Calendar containing the event. Default "primary".
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        try:
+            existing = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
+            updated = _build_event_with_reminder(existing, minutes_before, method)
+        except ValueError as exc:
+            return str(exc)
 
-    try:
-        existing = _gcal_request(f"/calendars/{calendar_id}/events/{event_id}", token)
-        updated = _build_event_with_reminder(existing, minutes_before, method)
-    except ValueError as exc:
-        return str(exc)
+        result = _gcal_request(
+            f"/calendars/{calendar_id}/events/{event_id}",
+            token,
+            method="PUT",
+            body=updated,
+        )
+        return json.dumps({"updated": _format_event(result)}, indent=2, ensure_ascii=False)
 
-    result = _gcal_request(
-        f"/calendars/{calendar_id}/events/{event_id}",
-        token,
-        method="PUT",
-        body=updated,
-    )
-    return json.dumps({"updated": _format_event(result)}, indent=2, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 @tool
@@ -499,16 +521,13 @@ def google_calendar_delete_event(
     calendar_id: Calendar containing the event. Default "primary".
     notify: Send cancellation to attendees. Default false.
     """
-    token, auth_url = _get_token_or_auth_url()
-    if auth_url:
-        return _handle_auth(auth_url)
-    if not token:
-        return "Failed to get Google Calendar token."
+    def _op(token: str) -> str:
+        path = f"/calendars/{calendar_id}/events/{event_id}"
+        params = {"sendUpdates": "all"} if notify else None
+        _gcal_request(path, token, method="DELETE", params=params)
+        return json.dumps({"deleted": event_id}, ensure_ascii=False)
 
-    path = f"/calendars/{calendar_id}/events/{event_id}"
-    params = {"sendUpdates": "all"} if notify else None
-    _gcal_request(path, token, method="DELETE", params=params)
-    return json.dumps({"deleted": event_id}, ensure_ascii=False)
+    return _run_gcal_op(_op)
 
 
 google_calendar_tools = [

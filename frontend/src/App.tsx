@@ -5,16 +5,20 @@ import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
 import { SignIn } from "./components/SignIn";
 import { Sidebar } from "./components/Sidebar";
+import { SubAgentCanvas } from "./components/SubAgentCanvas";
+import { TraceDrawer } from "./components/TraceDrawer";
 import {
   UnauthorizedError,
+  deleteSession,
   fetchSession,
   fetchSessions,
-  streamChat
+  renameSession,
+  streamChat,
+  togglePinSession
 } from "./lib/api";
 import {
   completeSignIn,
   currentUser,
-  getIdToken,
   isAuthConfigured,
   signIn,
   signOut,
@@ -24,8 +28,11 @@ import { getCurrentLocation, promptLikelyNeedsLocation } from "./lib/geolocation
 import type {
   ArtifactItem,
   ChatMessage,
+  FileAttachment,
   RoutePreview,
   SessionSummary,
+  SubAgentTask,
+  TraceInfo,
   UserLocation
 } from "./lib/types";
 import "./App.css";
@@ -39,103 +46,136 @@ type AuthState =
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const signedIn = auth.status === "signedIn";
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // On narrow screens the sidebar is an overlay — start it out of the way.
   const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
-  // True while a different transcript is being fetched — drives the crossfade.
   const [swapping, setSwapping] = useState(false);
-  // Guards against a slow fetch landing after a newer one (or a new chat).
+  const [activeArtifact, setActiveArtifact] = useState<ArtifactItem | null>(null);
+  const [activeTrace, setActiveTrace] = useState<TraceInfo | null>(null);
+  const [activeSubAgentTask, setActiveSubAgentTask] = useState<SubAgentTask | null>(null);
+
+  // Incremented on every session switch / clear so in-flight fetches discard.
   const loadSeq = useRef(0);
 
-  // Runs once on load: finishes a redirect if we just came back from Cognito,
-  // otherwise revives (and silently refreshes) any stored session.
+  // Clear any legacy session query params from browser URL on mount
   useEffect(() => {
-    void (async () => {
-      if (!isAuthConfigured()) {
-        setAuth({
-          status: "signedOut",
-          error:
-            "Auth is not configured — build with VITE_COGNITO_DOMAIN and VITE_COGNITO_CLIENT_ID set."
-        });
-        return;
-      }
-      try {
-        await completeSignIn();
-      } catch (err) {
-        setAuth({
-          status: "signedOut",
-          error: err instanceof Error ? err.message : String(err)
-        });
-        return;
-      }
-      const token = await getIdToken();
-      const user = token ? currentUser() : null;
-      setAuth(user ? { status: "signedIn", user } : { status: "signedOut" });
-    })();
+    try {
+      localStorage.removeItem("lastActiveSessionId");
+    } catch {}
+    if (window.location.search.includes("session=")) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   }, []);
 
-  // A token can die mid-session (refresh revoked, pool client changed). Drop
-  // straight back to the sign-in screen rather than showing a bare HTTP error.
+  /* ─── auth bootstrap ─────────────────────────────────────── */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init() {
+      if (!isAuthConfigured()) {
+        if (!cancelled) {
+          setAuth({
+            status: "signedOut",
+            error: "Cognito environment variables are missing."
+          });
+        }
+        return;
+      }
+
+      if (window.location.search.includes("code=")) {
+        const completed = await completeSignIn();
+        if (cancelled) return;
+        if (completed) {
+          const user = await currentUser();
+          if (user) {
+            setAuth({ status: "signedIn", user });
+            return;
+          }
+        }
+      }
+
+      const user = await currentUser();
+      if (cancelled) return;
+      if (user) {
+        setAuth({ status: "signedIn", user });
+      } else {
+        setAuth({ status: "signedOut" });
+      }
+    }
+
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleAuthFailure = useCallback((err: unknown): boolean => {
-    if (!(err instanceof UnauthorizedError)) return false;
-    setAuth({ status: "signedOut" });
-    return true;
+    if (err instanceof UnauthorizedError) {
+      setAuth({ status: "signedOut" });
+      return true;
+    }
+    return false;
   }, []);
 
   const startSignIn = useCallback(() => {
-    void signIn().catch((err: unknown) => {
-      setAuth({
-        status: "signedOut",
-        error: err instanceof Error ? err.message : String(err)
-      });
-    });
+    void signIn();
   }, []);
 
+  /* ─── session listing ────────────────────────────────────── */
+
   const refreshSessions = useCallback(async () => {
+    if (auth.status !== "signedIn") return;
+    setSessionsLoading(true);
     try {
       const list = await fetchSessions();
       setSessions(list);
     } catch (err) {
-      if (handleAuthFailure(err)) return;
-      // List failures are non-fatal — sidebar just stays as-is.
-      console.warn("session list failed:", err);
+      if (!handleAuthFailure(err)) {
+        console.warn("failed to fetch sessions:", err);
+      }
     } finally {
       setSessionsLoading(false);
     }
-  }, [handleAuthFailure]);
+  }, [auth.status, handleAuthFailure]);
 
   useEffect(() => {
-    if (!signedIn) return;
-    void refreshSessions();
-  }, [refreshSessions, signedIn]);
+    if (auth.status === "signedIn") {
+      void refreshSessions();
+    } else {
+      setSessions([]);
+      setActiveId(null);
+      setMessages([]);
+    }
+  }, [auth.status, refreshSessions]);
+
+  /* ─── session selection ──────────────────────────────────── */
 
   const openSession = useCallback(
     async (sessionId: string) => {
-      if (streaming) return;
+      setStreaming(false);
       const seq = ++loadSeq.current;
       setActiveId(sessionId);
       setError(null);
       if (isNarrow()) setSidebarOpen(false);
-      // Deliberately NOT clearing messages here. Emptying the column before
-      // the fetch resolves flashes a blank panel for the whole round-trip;
-      // the outgoing transcript stays put and fades out instead.
       setSwapping(true);
+
       try {
         const detail = await fetchSession(sessionId);
         if (seq !== loadSeq.current) return;
-        setMessages(
-          detail.messages.map((m) => ({
-            role: m.role,
-            text: m.content,
-            routePreviews: m.routePreviews
-          }))
-        );
+        const loaded: ChatMessage[] = (detail.messages ?? []).map((m: any) => ({
+          role: m.role,
+          text: m.content || m.text || "",
+          routePreviews: m.routePreviews,
+          documents: m.documents,
+          attachments: m.attachments,
+          trace: m.trace
+        }));
+        setMessages(loaded);
       } catch (err) {
         if (seq !== loadSeq.current) return;
         if (handleAuthFailure(err)) return;
@@ -145,23 +185,70 @@ export default function App() {
         if (seq === loadSeq.current) setSwapping(false);
       }
     },
-    [streaming, handleAuthFailure]
+    [handleAuthFailure]
   );
 
   const startNewChat = useCallback(() => {
-    if (streaming) return;
-    // Bump the sequence so an in-flight session fetch can't repopulate
-    // the transcript we just cleared.
+    setStreaming(false);
     loadSeq.current += 1;
     setActiveId(null);
     setMessages([]);
     setSwapping(false);
     setError(null);
     if (isNarrow()) setSidebarOpen(false);
-  }, [streaming]);
+  }, []);
 
-  // ⌘K / Ctrl+K starts a new chat. Deliberately unanimated — a shortcut
-  // used this often should feel instant, not staged.
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
+      if (activeId === sessionId) {
+        startNewChat();
+      }
+      try {
+        await deleteSession(sessionId);
+      } catch (err) {
+        console.error("Failed to delete session:", err);
+        void refreshSessions();
+      }
+    },
+    [activeId, startNewChat, refreshSessions]
+  );
+
+  const handleRenameSession = useCallback(
+    async (sessionId: string, newTitle: string) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === sessionId ? { ...s, title: newTitle } : s
+        )
+      );
+      try {
+        await renameSession(sessionId, newTitle);
+      } catch (err) {
+        console.error("Failed to rename session:", err);
+        void refreshSessions();
+      }
+    },
+    [refreshSessions]
+  );
+
+  const handleTogglePin = useCallback(
+    async (sessionId: string, pinned: boolean) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === sessionId ? { ...s, pinned } : s
+        )
+      );
+      try {
+        await togglePinSession(sessionId, pinned);
+      } catch (err) {
+        console.error("Failed to toggle pin:", err);
+        void refreshSessions();
+      }
+    },
+    [refreshSessions]
+  );
+
+  // ⌘K / Ctrl+K starts a new chat
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey)) return;
@@ -172,21 +259,38 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [startNewChat]);
 
+  // ⌘I / Ctrl+I toggles trace inspector
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setActiveTrace((curr) => {
+        if (curr) return null;
+        const lastWithTrace = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.trace);
+        return lastWithTrace?.trace ?? null;
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [messages]);
+
   const send = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, attachments?: FileAttachment[]) => {
       if (streaming) return;
-      // A session fetch still in flight must not overwrite what we stream.
       loadSeq.current += 1;
       setSwapping(false);
       setError(null);
+
+      let capturedSessionId = activeId;
       setMessages((prev) => [
         ...prev,
-        { role: "user", text: prompt },
+        { role: "user", text: prompt, attachments },
         { role: "assistant", text: "" }
       ]);
       setStreaming(true);
 
-      let capturedSessionId = activeId;
       const seenAuthUrls = new Set<string>();
 
       try {
@@ -202,7 +306,8 @@ export default function App() {
         for await (const ev of streamChat({
           sessionId: activeId,
           prompt,
-          userLocation
+          userLocation,
+          attachments
         })) {
           switch (ev.type) {
             case "session":
@@ -239,7 +344,38 @@ export default function App() {
                   if (!tools.some((t) => t.name === ev.name)) {
                     tools.push({ name: ev.name });
                   }
-                  next[next.length - 1] = { ...last, tools };
+
+                  const tasks = last.subagentTasks ? [...last.subagentTasks] : [];
+                  if (ev.name.includes("deep_research") || ev.name.includes("research")) {
+                    let currentTask = tasks[tasks.length - 1];
+                    if (!currentTask || currentTask.status === "completed") {
+                      currentTask = {
+                        id: `task-${Date.now()}`,
+                        agentName: "DeepResearchAgent",
+                        topic: prompt,
+                        depth: "comprehensive",
+                        status: "searching",
+                        startTime: Date.now(),
+                        steps: [
+                          {
+                            time: new Date().toLocaleTimeString(),
+                            tool: "research_agent",
+                            query: prompt,
+                            detail: `Initializing autonomous multi-vector deep research on '${prompt}'...`
+                          }
+                        ],
+                        sources: []
+                      };
+                      tasks.push(currentTask);
+                      setActiveSubAgentTask({ ...currentTask });
+                    }
+                  }
+
+                  next[next.length - 1] = {
+                    ...last,
+                    tools,
+                    ...(tasks.length > 0 ? { subagentTasks: tasks } : {})
+                  };
                 }
                 return next;
               });
@@ -249,7 +385,14 @@ export default function App() {
                 const next = [...prev];
                 const last = next[next.length - 1];
                 if (last?.role === "assistant") {
-                  next[next.length - 1] = { ...last, text: last.text + ev.text };
+                  const newText = last.text + ev.text;
+                  const updatedTasks = last.subagentTasks?.map((t) => ({ ...t, summary: newText }));
+                  next[next.length - 1] = {
+                    ...last,
+                    text: newText,
+                    ...(updatedTasks ? { subagentTasks: updatedTasks } : {})
+                  };
+                  setActiveSubAgentTask((curr) => (curr ? { ...curr, summary: newText } : null));
                 }
                 return next;
               });
@@ -280,6 +423,93 @@ export default function App() {
                 return next;
               });
               break;
+            case "subagent_event": {
+              const subEv = ev.subagent;
+              if (!subEv || typeof subEv !== "object") break;
+
+              const nowStr = new Date().toLocaleTimeString();
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  const tasks = [...(last.subagentTasks ?? [])];
+                  let currentTask = tasks[tasks.length - 1];
+
+                  if (!currentTask || currentTask.status === "completed") {
+                    currentTask = {
+                      id: `task-${Date.now()}`,
+                      agentName: subEv.agent || "DeepResearchAgent",
+                      topic: subEv.topic || prompt,
+                      depth: subEv.depth || "comprehensive",
+                      status: "planning",
+                      startTime: Date.now(),
+                      steps: [],
+                      sources: []
+                    };
+                    tasks.push(currentTask);
+                  }
+
+                  if (subEv.type === "subagent_step") {
+                    currentTask.steps = [
+                      ...currentTask.steps,
+                      {
+                        time: nowStr,
+                        tool: subEv.tool,
+                        query: subEv.query,
+                        detail: subEv.detail || subEv.message || "Executing research mission..."
+                      }
+                    ];
+                    if (subEv.stage === "planning") currentTask.status = "planning";
+                    else if (subEv.stage === "searching") currentTask.status = "searching";
+                    else if (subEv.stage === "synthesizing") currentTask.status = "synthesizing";
+                    else if (subEv.stage === "completed") {
+                      currentTask.status = "completed";
+                      currentTask.endTime = Date.now();
+                    } else if (subEv.stage === "error") {
+                      currentTask.status = "error";
+                      currentTask.endTime = Date.now();
+                    } else {
+                      currentTask.status = "searching";
+                    }
+                  } else if (subEv.type === "subagent_source") {
+                    currentTask.sources = [
+                      ...currentTask.sources,
+                      {
+                        title: subEv.title || "Untitled",
+                        url: subEv.url || "",
+                        source: subEv.source || "web",
+                        snippet: subEv.snippet,
+                        published: subEv.published,
+                        score: subEv.score
+                      }
+                    ];
+                    currentTask.status = "searching";
+                  }
+
+                  next[next.length - 1] = {
+                    ...last,
+                    subagentTasks: tasks
+                  };
+
+                  setActiveSubAgentTask({ ...currentTask });
+                }
+                return next;
+              });
+              break;
+            }
+            case "trace":
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === "assistant") {
+                  next[next.length - 1] = {
+                    ...last,
+                    trace: ev.trace
+                  };
+                }
+                return next;
+              });
+              break;
             case "warn":
               console.warn(ev.message);
               break;
@@ -296,22 +526,18 @@ export default function App() {
         }
       } finally {
         setStreaming(false);
-        // Refresh so the new session (or updated title/updatedAt) shows up.
-        void refreshSessions();
-        if (capturedSessionId && capturedSessionId !== activeId) {
-          setActiveId(capturedSessionId);
+        if (capturedSessionId) {
+          void refreshSessions();
         }
       }
     },
-    [activeId, streaming, refreshSessions, handleAuthFailure]
+    [activeId, streaming, handleAuthFailure, refreshSessions]
   );
 
   const setReminderFromPreview = useCallback(
     (preview: RoutePreview) => {
       if (!preview.eventId) return;
-      const minutes =
-        preview.minutesBefore ??
-        Math.max(10, Math.ceil((preview.durationSeconds ?? 1800) / 60) + 10);
+      const minutes = preview.minutesBefore ?? 15;
       const calendarId = preview.calendarId ?? "primary";
       void send(
         `Set a popup reminder ${minutes} minutes before calendar event ${preview.eventId} on calendar ${calendarId}.`
@@ -320,12 +546,9 @@ export default function App() {
     [send]
   );
 
-  const [activeArtifact, setActiveArtifact] = useState<ArtifactItem | null>(null);
-
   const activeSession = sessions.find((s) => s.sessionId === activeId);
   const headerTitle = activeSession?.title?.trim() || "Untitled";
 
-  // Every hook above runs unconditionally; only the render branches.
   if (auth.status === "loading") return <div className="signin" />;
   if (auth.status === "signedOut") {
     return <SignIn onSignIn={startSignIn} error={auth.error} />;
@@ -335,7 +558,8 @@ export default function App() {
     <div
       className="app"
       data-sidebar={sidebarOpen ? "open" : "closed"}
-      data-canvas={activeArtifact ? "open" : "closed"}
+      data-canvas={activeArtifact || activeSubAgentTask ? "open" : "closed"}
+      data-trace={activeTrace ? "open" : "closed"}
     >
       <Sidebar
         sessions={sessions}
@@ -344,6 +568,9 @@ export default function App() {
         onSelect={openSession}
         onNew={startNewChat}
         onToggle={() => setSidebarOpen((o) => !o)}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onTogglePin={handleTogglePin}
       />
       <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden />
       <main className="main">
@@ -364,14 +591,30 @@ export default function App() {
           onSetReminder={setReminderFromPreview}
           onSuggest={send}
           onOpenArtifact={setActiveArtifact}
+          onOpenTrace={setActiveTrace}
+          onOpenSubAgent={setActiveSubAgentTask}
         />
-        <Composer onSend={send} disabled={streaming} />
+        <Composer onSend={send} disabled={streaming} sessionId={activeId} />
       </main>
 
       {activeArtifact && (
         <ArtifactCanvas
           artifact={activeArtifact}
           onClose={() => setActiveArtifact(null)}
+        />
+      )}
+
+      {activeSubAgentTask && (
+        <SubAgentCanvas
+          task={activeSubAgentTask}
+          onClose={() => setActiveSubAgentTask(null)}
+        />
+      )}
+
+      {activeTrace && (
+        <TraceDrawer
+          trace={activeTrace}
+          onClose={() => setActiveTrace(null)}
         />
       )}
     </div>

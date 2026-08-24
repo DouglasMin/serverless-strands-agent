@@ -9,6 +9,14 @@ module "data" {
   session_ttl_days = var.session_ttl_days
 }
 
+module "uploads" {
+  source = "../../modules/uploads"
+
+  name_prefix           = local.name_prefix
+  allowed_origins       = [var.site_url, var.local_dev_url]
+  upload_retention_days = 30
+}
+
 module "auth" {
   source = "../../modules/auth"
 
@@ -31,6 +39,8 @@ module "backend" {
   aws_profile        = var.aws_profile
   sessions_table_arn = module.data.sessions_table_arn
   sessions_table     = module.data.sessions_table_name
+  uploads_bucket     = module.uploads.bucket_id
+  uploads_bucket_arn = module.uploads.bucket_arn
   agent_runtime_arn  = var.agent_runtime_arn
   log_retention_days = var.log_retention_days
   lambda_source_dir  = "${path.module}/../../../backend"
