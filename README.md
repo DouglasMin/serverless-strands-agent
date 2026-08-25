@@ -19,6 +19,8 @@
 
 ## 🏗️ System Architecture
 
+![System Architecture](./architecture22.drawio.png)
+
 ```mermaid
 flowchart TB
     %% Styling Classes
