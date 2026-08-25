@@ -878,8 +878,6 @@
   margin-bottom: 12px;
 }
 
-/* Badges arrive one at a time as tools fire, so the entrance belongs on
-   the badge — not on the container, which only mounts once. */
 .tool-badge {
   display: inline-flex;
   align-items: center;
@@ -889,6 +887,19 @@
   border-radius: var(--r-sm);
   background: var(--surface-2);
   animation: badge-in var(--dur-base) var(--ease-out) both;
+  animation-delay: calc(var(--badge-idx, 0) * 35ms);
+  transition: transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+
+.tool-badge:hover {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.tool-badge:active {
+  transform: scale(0.96);
 }
 
 .tool-badge__icon {
@@ -1987,34 +1998,51 @@
 }
 
 .document-card__canvas-btn {
-  padding: 5px 9px;
+  padding: 5px 10px;
   font-size: 11px;
+  font-weight: 600;
   color: var(--fg-muted);
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   cursor: pointer;
-  transition: all var(--dur-fast) ease;
+  transition: transform var(--dur-press) var(--ease-out),
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    background-color var(--dur-fast) ease;
 }
 
 .document-card__canvas-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent-line);
+  color: var(--fg);
+  border-color: var(--line-strong);
+  background: var(--surface-3);
+}
+
+.document-card__canvas-btn:active {
+  transform: scale(0.95);
 }
 
 .document-card__download-btn {
   padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11.5px;
+  font-weight: 600;
   color: #ffffff;
   background: var(--accent);
+  border: none;
   border-radius: var(--r-md);
   cursor: pointer;
-  transition: background var(--dur-fast) ease;
+  transition: transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-fast) ease,
+    filter var(--dur-fast) ease;
 }
 
 .document-card__download-btn:hover:not(:disabled) {
   background: #4879e6;
+  filter: brightness(1.05);
+}
+
+.document-card__download-btn:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .document-card__download-btn:disabled {

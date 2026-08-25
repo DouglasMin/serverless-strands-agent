@@ -101,7 +101,11 @@ export function ToolBadges({
         const isSubAgent = t.name.includes("deep_research") || t.name.includes("research");
         const isLatest = isStreaming && idx === visibleTools.length - 1;
         return (
-          <span key={t.name} className={`tool-badge ${isSubAgent ? "tool-badge--subagent" : ""}`}>
+          <span
+            key={t.name}
+            className={`tool-badge ${isSubAgent ? "tool-badge--subagent" : ""}`}
+            style={{ "--badge-idx": idx } as React.CSSProperties}
+          >
             {isLatest && <span className="tool-badge__pulse" />}
             <img
               className="tool-badge__icon"

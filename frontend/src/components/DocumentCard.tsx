@@ -125,20 +125,20 @@ export function DocumentCard({ document: rawDoc, onOpenCanvas }: DocumentCardPro
           {onOpenCanvas && (
             <button
               type="button"
-              className="document-card__canvas-btn"
+              className="document-card__canvas-btn mono"
               onClick={handleOpenCanvas}
-              title="Open document details in canvas"
+              title="Preview in Workspace Studio"
             >
-              canvas ↗
+              Preview in Studio ↗
             </button>
           )}
           <button
             type="button"
-            className="document-card__download-btn"
+            className="document-card__download-btn mono"
             onClick={handleDownload}
             disabled={downloading}
           >
-            {downloading ? "Downloading..." : "Download File ↓"}
+            {downloading ? "Downloading..." : "Download ↓"}
           </button>
         </div>
       </div>

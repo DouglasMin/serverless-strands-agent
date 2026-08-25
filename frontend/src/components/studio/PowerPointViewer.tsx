@@ -103,7 +103,10 @@ export function PowerPointViewer({ document }: PowerPointViewerProps) {
 
       {/* 16:9 Presentation Canvas */}
       <div className="ppt-viewer__viewport">
-        <div className={`ppt-slide ${isDark ? "ppt-slide--dark" : "ppt-slide--light"}`}>
+        <div
+          key={currentSlide}
+          className={`ppt-slide ${isDark ? "ppt-slide--dark" : "ppt-slide--light"}`}
+        >
           {/* Header Row */}
           {slide.type !== "title" && (
             <div className="ppt-slide__header">
