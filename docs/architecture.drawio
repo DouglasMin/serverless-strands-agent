@@ -1,0 +1,183 @@
+<mxfile host="app.diagrams.net" modified="2026-08-25T13:05:00.000Z" agent="Mozilla/5.0" version="24.7.5">
+  <diagram id="serverless-strands-architecture" name="Serverless Strands Architecture">
+    <mxGraphModel dx="1422" dy="880" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1050" background="#0B0D13" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- GROUP 1: FRONTEND LAYER -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <mxCell id="grp_frontend" value="1. Client &amp; Frontend Workspace (React 19 + TypeScript + Vite)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#111622;strokeColor=#1E293B;fontColor=#38BDF8;fontStyle=1;fontSize=13;rounded=1;arcSize=6;startSize=32;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="380" height="920" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_ui_app" value="&lt;b&gt;🖥️ React 19 SPA Client&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Serverless Strands Dark Interface&lt;br&gt;Vite Manual Chunks (243KB Base)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#38BDF8;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_frontend">
+          <mxGeometry x="30" y="50" width="320" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_studio" value="&lt;b&gt;📁 Unified Workspace Studio&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;• PowerPoint 16:9 Slide Carousel&lt;br&gt;• Excel Multi-Sheet Spreadsheet Grid&lt;br&gt;• Word Executive Dossier Reader&lt;br&gt;• 400% Zoomable Mermaid Lightbox&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#3B82F6;fontColor=#F8FAFC;fontSize=12;align=left;spacingLeft=15;" vertex="1" parent="grp_frontend">
+          <mxGeometry x="30" y="150" width="320" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_composer" value="&lt;b&gt;⚡ Slash Composer &amp; Mode Toggles&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;• &lt;b&gt;/research, /ppt, /excel, /route&lt;/b&gt;&lt;br&gt;• Dynamic Mode Badges &amp; Autocomplete&lt;br&gt;• Audio Visualizer Voice Input&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#818CF8;fontColor=#F8FAFC;fontSize=12;align=left;spacingLeft=15;" vertex="1" parent="grp_frontend">
+          <mxGeometry x="30" y="290" width="320" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_export" value="&lt;b&gt;📦 Session Export &amp; Archive Engine&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;• 1-Click Deliverables ZIP Bundler (JSZip)&lt;br&gt;• Full Markdown (.md) Dossier Export&lt;br&gt;• Standalone HTML Report Generation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#10B981;fontColor=#F8FAFC;fontSize=12;align=left;spacingLeft=15;" vertex="1" parent="grp_frontend">
+          <mxGeometry x="30" y="410" width="320" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fe_cognito" value="&lt;b&gt;🔐 Auth &amp; Session Management&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Amazon Cognito + Google IdP (PKCE)&lt;br&gt;DynamoDB Recency Session Lists&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#F59E0B;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_frontend">
+          <mxGeometry x="30" y="530" width="320" height="70" as="geometry" />
+        </mxCell>
+
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- GROUP 2: EDGE & DISTRIBUTION LAYER -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <mxCell id="grp_edge" value="2. AWS Edge &amp; Delivery" style="swimlane;whiteSpace=wrap;html=1;fillColor=#0F131D;strokeColor=#1E293B;fontColor=#38BDF8;fontStyle=1;fontSize=13;rounded=1;arcSize=6;startSize=32;" vertex="1" parent="1">
+          <mxGeometry x="460" y="40" width="260" height="340" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_cf" value="&lt;b&gt;🌐 Amazon CloudFront&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Global Edge CDN Distribution&lt;br&gt;Origin Access Control (OAC)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#38BDF8;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_edge">
+          <mxGeometry x="25" y="50" width="210" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_s3_ui" value="&lt;b&gt;🪣 S3 Static Hosting&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;serverlessstrands-dev-ui&lt;br&gt;Encrypted SPA Bundles&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#F87171;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_edge">
+          <mxGeometry x="25" y="160" width="210" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge_apigw" value="&lt;b&gt;⚡ AgentCore SSE Proxy&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Lambda Function URL&lt;br&gt;Real-time EventStream Proxy&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#F59E0B;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_edge">
+          <mxGeometry x="25" y="250" width="210" height="70" as="geometry" />
+        </mxCell>
+
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- GROUP 3: AGENTCORE MULTI-AGENT RUNTIME & TOOLS -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <mxCell id="grp_agentcore" value="3. AWS Bedrock AgentCore Platform (ap-northeast-2)" style="swimlane;whiteSpace=wrap;html=1;fillColor=#0C101A;strokeColor=#6366F1;strokeWidth=2;fontColor=#818CF8;fontStyle=1;fontSize=14;rounded=1;arcSize=4;startSize=36;" vertex="1" parent="1">
+          <mxGeometry x="760" y="40" width="800" height="920" as="geometry" />
+        </mxCell>
+
+        <!-- Multi-Agent Orchestration Box -->
+        <mxCell id="grp_agents" value="🤖 Autonomous Agent-to-Agent (A2A) Orchestration" style="swimlane;whiteSpace=wrap;html=1;fillColor=#131B2E;strokeColor=#38BDF8;fontColor=#38BDF8;fontStyle=1;fontSize=12;rounded=1;arcSize=6;startSize=28;" vertex="1" parent="grp_agentcore">
+          <mxGeometry x="30" y="50" width="740" height="230" as="geometry" />
+        </mxCell>
+
+        <mxCell id="agent_main" value="&lt;b&gt;🧠 Main Coordinator Agent&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Bedrock AgentCore Runtime (Firecracker microVM)&lt;br&gt;&lt;b&gt;Claude 3.7 Sonnet (Hybrid Reasoning)&lt;/b&gt;&lt;br&gt;Intent Routing &amp; Multi-Tool Dispatcher&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#38BDF8;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_agents">
+          <mxGeometry x="30" y="45" width="310" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="agent_research" value="&lt;b&gt;🔬 Deep Research Subagent&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Autonomous Multi-Step Researcher&lt;br&gt;ArXiv + DuckDuckGo + Tavily Search&lt;br&gt;Real-Time Steps &amp; Sources Streaming&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#C084FC;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_agents">
+          <mxGeometry x="400" y="45" width="310" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="agent_memory" value="&lt;b&gt;💾 AgentCore Memory (DynamoDB STM + LTM)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Short-Term Context · Long-Term Semantic Retrieval · User Preference Profiles&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#182030;strokeColor=#10B981;fontColor=#F8FAFC;fontSize=11;" vertex="1" parent="grp_agents">
+          <mxGeometry x="30" y="150" width="680" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- A2A Link -->
+        <mxCell id="edge_a2a" value="A2A MCP Delegation" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#C084FC;strokeWidth=2;fontColor=#C084FC;fontSize=10;" edge="1" parent="grp_agents" source="agent_main" target="agent_research">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+
+        <!-- Execution Tools Grid -->
+        <mxCell id="grp_tools" value="🛠️ Execution Engine &amp; MCP Integration Tools" style="swimlane;whiteSpace=wrap;html=1;fillColor=#131B2E;strokeColor=#3B82F6;fontColor=#60A5FA;fontStyle=1;fontSize=12;rounded=1;arcSize=6;startSize=28;" vertex="1" parent="grp_agentcore">
+          <mxGeometry x="30" y="300" width="740" height="340" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_office" value="&lt;b&gt;📄 Office Deliverables Engine&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;• &lt;b&gt;excel_tool&lt;/b&gt; (openpyxl multi-sheet &amp; formulas)&lt;br&gt;• &lt;b&gt;powerpoint_tool&lt;/b&gt; (python-pptx 16:9 dark/light)&lt;br&gt;• &lt;b&gt;word_tool&lt;/b&gt; (python-docx executive dossiers)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#F97316;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="grp_tools">
+          <mxGeometry x="30" y="45" width="320" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_sandbox" value="&lt;b&gt;💻 Python Sandbox Interpreter&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Isolated Cloud Container Sandbox&lt;br&gt;Data Science &amp; Matplotlib Chart Generation&lt;br&gt;Autonomous Code Execution &amp; Fixes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#38BDF8;fontColor=#F8FAFC;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="grp_tools">
+          <mxGeometry x="390" y="45" width="320" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_maps" value="&lt;b&gt;🗺️ Google Mobility &amp; Maps&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Geocoding · Routes · Distance Matrix&lt;br&gt;Calendar Departure Reminders&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#10B981;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_tools">
+          <mxGeometry x="30" y="150" width="320" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_oauth" value="&lt;b&gt;🔐 3LO OAuth Integration Gateway&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;GitHub Repos · Google Calendar (R/W)&lt;br&gt;Notion Pages · Gmail Agent Access&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#EC4899;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_tools">
+          <mxGeometry x="390" y="150" width="320" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tool_finance" value="&lt;b&gt;📈 Financial &amp; Web Intelligence (MCP Targets)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Yahoo Finance Real-time Quotes &amp; SMA · Tavily Web News · DuckDuckGo · Wikipedia&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#EAB308;fontColor=#F8FAFC;fontSize=11;" vertex="1" parent="grp_tools">
+          <mxGeometry x="30" y="245" width="680" height="75" as="geometry" />
+        </mxCell>
+
+
+        <!-- Storage & Deliverables Architecture -->
+        <mxCell id="grp_storage" value="📦 Direct S3 Deliverables &amp; Presigned Stream Pipeline" style="swimlane;whiteSpace=wrap;html=1;fillColor=#131B2E;strokeColor=#10B981;fontColor=#34D399;fontStyle=1;fontSize=12;rounded=1;arcSize=6;startSize=28;" vertex="1" parent="grp_agentcore">
+          <mxGeometry x="30" y="660" width="740" height="230" as="geometry" />
+        </mxCell>
+
+        <mxCell id="store_s3_bucket" value="&lt;b&gt;🪣 S3 Deliverables &amp; User Uploads Bucket&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;s3://serverlessstrands-dev-user-uploads-9837d429/deliverables/&lt;br&gt;Zero Base64 bloat · SSE Event payloads &amp;lt; 1KB&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#10B981;strokeWidth=2;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_storage">
+          <mxGeometry x="30" y="45" width="420" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="store_presigned" value="&lt;b&gt;🔗 24h Presigned S3 URLs&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;Content-Disposition: attachment&lt;br&gt;Direct high-speed browser downloads&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#38BDF8;fontColor=#F8FAFC;fontSize=12;" vertex="1" parent="grp_storage">
+          <mxGeometry x="480" y="45" width="230" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="obs_langfuse" value="&lt;b&gt;📊 Langfuse Cloud &amp; OpenTelemetry Tracing&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#94A3B8&quot; style=&quot;font-size:11px&quot;&gt;End-to-End Latency Tracking · Tool Execution Waterfall · Token Cost Analytics · Real-time Telemetry Drawer&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1E293B;strokeColor=#A855F7;fontColor=#F8FAFC;fontSize=11;" vertex="1" parent="grp_storage">
+          <mxGeometry x="30" y="135" width="680" height="70" as="geometry" />
+        </mxCell>
+
+
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- CROSS-LAYER CONNECTORS -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <mxCell id="conn_user_cf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;" edge="1" parent="1" source="fe_ui_app" target="edge_cf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn_cf_s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#F87171;strokeWidth=1;dashed=1;" edge="1" parent="1" source="edge_cf" target="edge_s3_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn_ui_apigw" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#F59E0B;strokeWidth=2;" edge="1" parent="1" source="fe_composer" target="edge_apigw">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="340" />
+              <mxPoint x="430" y="325" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="conn_apigw_main" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;" edge="1" parent="1" source="edge_apigw" target="agent_main">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="740" y="325" />
+              <mxPoint x="740" y="130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="conn_main_tools" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#3B82F6;strokeWidth=2;" edge="1" parent="1" source="agent_main" target="tool_office">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn_office_s3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10B981;strokeWidth=2;" edge="1" parent="1" source="tool_office" target="store_s3_bucket">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn_s3_presigned" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#38BDF8;strokeWidth=2;" edge="1" parent="1" source="store_s3_bucket" target="store_presigned">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="conn_presigned_studio" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#10B981;strokeWidth=2;dashed=1;" edge="1" parent="1" source="store_presigned" target="fe_studio">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1355" y="990" />
+              <mxPoint x="200" y="990" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
