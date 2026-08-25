@@ -388,15 +388,28 @@ def create_powerpoint_presentation(
     prs.save(buffer)
     pptx_bytes = buffer.getvalue()
     size_bytes = len(pptx_bytes)
-    base64_data = base64.b64encode(pptx_bytes).decode("utf-8")
-    data_uri = f"data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,{base64_data}"
+    content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+    from .s3_storage import upload_deliverable_to_s3
+
+    s3_uri, download_url, fallback_data_uri = upload_deliverable_to_s3(
+        file_bytes=pptx_bytes,
+        filename=filename,
+        content_type=content_type,
+    )
 
     doc_event = {
         "filename": filename,
         "file_type": "powerpoint",
         "size_bytes": size_bytes,
-        "data_uri": data_uri,
+        "s3_uri": s3_uri,
+        "url": download_url,
+        **({"data_uri": fallback_data_uri} if fallback_data_uri else {}),
         "summary": f"{title} ({total_slides} slides)",
+        "title": title,
+        "subtitle": subtitle,
+        "theme": theme,
+        "slides": slides_data,
     }
 
     from office_tools import document_queue
@@ -410,6 +423,8 @@ def create_powerpoint_presentation(
             "file_type": "powerpoint",
             "size_bytes": size_bytes,
             "slides_count": total_slides,
+            "s3_uri": s3_uri,
+            "url": download_url,
             "download_ready": True,
             "summary": f"Successfully created PowerPoint presentation '{filename}' with {total_slides} slide(s).",
         },

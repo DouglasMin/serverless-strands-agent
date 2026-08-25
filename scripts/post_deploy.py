@@ -171,9 +171,9 @@ def patch_agent_role(role_arn: str, memory_arns: list[str], region: str) -> None
                 "Resource": langfuse_secret_arn(region),
             },
             {
-                "Sid": "UserUploadsS3Read",
+                "Sid": "UserUploadsAndDeliverablesS3Access",
                 "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:ListBucket"],
+                "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
                 "Resource": [
                     "arn:aws:s3:::serverlessstrands-dev-user-uploads-*",
                     "arn:aws:s3:::serverlessstrands-dev-user-uploads-*/*",

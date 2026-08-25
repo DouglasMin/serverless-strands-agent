@@ -82,17 +82,28 @@ export interface ArtifactItem {
   language?: string;
   type: "code" | "markdown" | "document" | "html";
   content: string;
+  document?: DocumentArtifact;
 }
 
 export interface DocumentArtifact {
   filename: string;
   fileType?: "excel" | "word" | "powerpoint" | string;
+  file_type?: string;
   type?: string;
   sizeBytes?: number;
+  size_bytes?: number;
   dataUri?: string;
+  data_uri?: string;
   url?: string;
   s3Uri?: string;
+  s3_uri?: string;
   summary?: string;
+  title?: string;
+  subtitle?: string;
+  theme?: string;
+  slides?: any[];
+  sheets?: any[];
+  sections?: any[];
 }
 
 export interface StockQuoteData {

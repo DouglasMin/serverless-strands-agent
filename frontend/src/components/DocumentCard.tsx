@@ -88,7 +88,8 @@ export function DocumentCard({ document: rawDoc, onOpenCanvas }: DocumentCardPro
       id: filename,
       title: filename,
       type: "document",
-      content: `# ${filename}\n\n**File Type:** ${meta.badge}\n**File Size:** ${formatBytes(sizeBytes)}\n${summary ? `**Summary:** ${summary}\n` : ""}\n\nClick the download button above or in the message bubble to save the binary file.`
+      content: `# ${filename}\n\n**File Type:** ${meta.badge}\n**File Size:** ${formatBytes(sizeBytes)}\n${summary ? `**Summary:** ${summary}\n` : ""}\n\nClick the download button to save the binary file.`,
+      document: rawDoc
     });
   };
 
@@ -124,20 +125,20 @@ export function DocumentCard({ document: rawDoc, onOpenCanvas }: DocumentCardPro
           {onOpenCanvas && (
             <button
               type="button"
-              className="document-card__canvas-btn"
+              className="document-card__canvas-btn mono"
               onClick={handleOpenCanvas}
-              title="Open document details in canvas"
+              title="Preview in Workspace Studio"
             >
-              canvas ↗
+              Preview in Studio ↗
             </button>
           )}
           <button
             type="button"
-            className="document-card__download-btn"
+            className="document-card__download-btn mono"
             onClick={handleDownload}
             disabled={downloading}
           >
-            {downloading ? "Downloading..." : "Download File ↓"}
+            {downloading ? "Downloading..." : "Download ↓"}
           </button>
         </div>
       </div>

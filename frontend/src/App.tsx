@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArtifactCanvas } from "./components/ArtifactCanvas";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { MessageList } from "./components/MessageList";
 import { SignIn } from "./components/SignIn";
 import { Sidebar } from "./components/Sidebar";
-import { SubAgentCanvas } from "./components/SubAgentCanvas";
-import { TraceDrawer } from "./components/TraceDrawer";
+
+const StudioDrawer = lazy(() =>
+  import("./components/studio/StudioDrawer").then((m) => ({ default: m.StudioDrawer }))
+);
 import {
   UnauthorizedError,
   deleteSession,
@@ -581,6 +582,8 @@ export default function App() {
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
           userEmail={auth.user.email}
           onSignOut={signOut}
+          messages={messages}
+          sessionId={activeId}
         />
         <MessageList
           messages={messages}
@@ -597,26 +600,20 @@ export default function App() {
         <Composer onSend={send} disabled={streaming} sessionId={activeId} />
       </main>
 
-      {activeArtifact && (
-        <ArtifactCanvas
-          artifact={activeArtifact}
-          onClose={() => setActiveArtifact(null)}
-        />
-      )}
-
-      {activeSubAgentTask && (
-        <SubAgentCanvas
-          task={activeSubAgentTask}
-          onClose={() => setActiveSubAgentTask(null)}
-        />
-      )}
-
-      {activeTrace && (
-        <TraceDrawer
-          trace={activeTrace}
-          onClose={() => setActiveTrace(null)}
-        />
-      )}
+      <Suspense fallback={null}>
+        {(activeArtifact || activeSubAgentTask || activeTrace) && (
+          <StudioDrawer
+            artifact={activeArtifact}
+            subagentTask={activeSubAgentTask}
+            trace={activeTrace}
+            onClose={() => {
+              setActiveArtifact(null);
+              setActiveSubAgentTask(null);
+              setActiveTrace(null);
+            }}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }
