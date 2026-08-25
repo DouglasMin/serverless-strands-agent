@@ -8,14 +8,7 @@ import type {
 } from "../lib/types";
 import { AssistantMessage } from "./messages/AssistantMessage";
 import { UserMessage } from "./messages/UserMessage";
-
-const SUGGESTIONS = [
-  "What's on my calendar today?",
-  "Route to my next meeting",
-  "How did NVDA close today?",
-  "Write a python script to simulate a random walk",
-  "Draw an architecture diagram of this system in mermaid"
-];
+import { ShowcaseHero } from "./ShowcaseHero";
 
 interface Props {
   messages: ChatMessage[];
@@ -99,27 +92,7 @@ export function MessageList({
     return (
       <div className="messages-region">
         <div className="messages messages--empty" ref={scrollRef}>
-          <div className="empty">
-            <div className="empty__glyph mono" aria-hidden>
-              §
-            </div>
-            <h2 className="empty__title">Serverless Strands Studio</h2>
-            <p className="empty__desc">
-              Multi-agent serverless workspace powered by Bedrock AgentCore, A2A Deep Research, and Microsoft Office document synthesis.
-            </p>
-            <div className="empty__suggestions">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="empty__chip mono"
-                  onClick={() => onSuggest?.(s)}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
+          <ShowcaseHero onSuggest={onSuggest} />
         </div>
       </div>
     );
