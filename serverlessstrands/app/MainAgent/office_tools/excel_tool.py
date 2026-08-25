@@ -306,15 +306,25 @@ def create_excel_spreadsheet(
     wb.save(buffer)
     excel_bytes = buffer.getvalue()
     size_bytes = len(excel_bytes)
-    base64_data = base64.b64encode(excel_bytes).decode("utf-8")
-    data_uri = f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64_data}"
+    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    from .s3_storage import upload_deliverable_to_s3
+
+    s3_uri, download_url, fallback_data_uri = upload_deliverable_to_s3(
+        file_bytes=excel_bytes,
+        filename=filename,
+        content_type=content_type,
+    )
 
     doc_event = {
         "filename": filename,
         "file_type": "excel",
         "size_bytes": size_bytes,
-        "data_uri": data_uri,
+        "s3_uri": s3_uri,
+        "url": download_url,
+        **({"data_uri": fallback_data_uri} if fallback_data_uri else {}),
         "summary": f"{total_sheets} sheet(s), {total_rows} row(s)",
+        "sheets": sheets_data,
     }
 
     from office_tools import document_queue
@@ -328,6 +338,8 @@ def create_excel_spreadsheet(
             "file_type": "excel",
             "size_bytes": size_bytes,
             "sheets_count": total_sheets,
+            "s3_uri": s3_uri,
+            "url": download_url,
             "download_ready": True,
             "summary": f"Successfully created Excel spreadsheet '{filename}' with {total_sheets} sheet(s).",
         },

@@ -21,7 +21,16 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: "dist",
-      sourcemap: true
+      sourcemap: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            "react-vendor": ["react", "react-dom"],
+            "markdown-vendor": ["react-markdown", "remark-gfm"],
+            "diagrams-vendor": ["mermaid"],
+          }
+        }
+      }
     }
   };
 });

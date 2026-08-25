@@ -88,7 +88,8 @@ export function DocumentCard({ document: rawDoc, onOpenCanvas }: DocumentCardPro
       id: filename,
       title: filename,
       type: "document",
-      content: `# ${filename}\n\n**File Type:** ${meta.badge}\n**File Size:** ${formatBytes(sizeBytes)}\n${summary ? `**Summary:** ${summary}\n` : ""}\n\nClick the download button above or in the message bubble to save the binary file.`
+      content: `# ${filename}\n\n**File Type:** ${meta.badge}\n**File Size:** ${formatBytes(sizeBytes)}\n${summary ? `**Summary:** ${summary}\n` : ""}\n\nClick the download button to save the binary file.`,
+      document: rawDoc
     });
   };
 

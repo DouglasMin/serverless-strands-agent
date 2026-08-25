@@ -1,7 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import { uploadFileToS3 } from "../lib/api";
 import type { FileAttachment } from "../lib/types";
 import { AudioVisualizer } from "./AudioVisualizer";
+import { ModePills, AGENT_MODES, type AgentMode } from "./composer/ModePills";
+import { SlashCommandMenu, SLASH_COMMANDS, type SlashCommand } from "./composer/SlashCommandMenu";
 
 interface Props {
   onSend: (text: string, attachments?: FileAttachment[]) => void;
@@ -62,14 +64,45 @@ function getFileIcon(filename: string): string {
 export function Composer({ onSend, disabled, sessionId }: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [activeMode, setActiveMode] = useState<AgentMode>("auto");
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
 
+  // Slash Command Menu State
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
+  const activeModeItem = useMemo(
+    () => AGENT_MODES.find((m) => m.id === activeMode) || AGENT_MODES[0],
+    [activeMode]
+  );
+
+  // Determine if slash command popup should show
+  const isSlashActive = useMemo(() => {
+    if (slashDismissed || !text.startsWith("/")) return false;
+    // Show slash menu if cursor is on the first token (no space yet)
+    return !text.includes(" ");
+  }, [text, slashDismissed]);
+
+  const filteredCommands = useMemo(() => {
+    if (!isSlashActive) return [];
+    const query = text.toLowerCase().replace(/^\//, "").trim();
+    return SLASH_COMMANDS.filter((cmd) => {
+      if (!query) return true;
+      return (
+        cmd.command.toLowerCase().includes(query) ||
+        cmd.label.toLowerCase().includes(query) ||
+        cmd.description.toLowerCase().includes(query) ||
+        cmd.id.toLowerCase().includes(query)
+      );
+    });
+  }, [text, isSlashActive]);
 
   const handleFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0 || disabled) return;
@@ -103,16 +136,39 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleSelectCommand = (cmd: SlashCommand) => {
+    if (cmd.mode && cmd.mode !== "auto") {
+      setActiveMode(cmd.mode as AgentMode);
+    }
+    setText(cmd.template);
+    setSlashDismissed(true);
+    requestAnimationFrame(() => {
+      if (ref.current) {
+        ref.current.focus();
+        ref.current.setSelectionRange(cmd.template.length, cmd.template.length);
+      }
+    });
+  };
+
   const submit = () => {
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0) || disabled || isUploading) return;
     if (isListening) stopListening();
 
+    // If a specialized mode is active and prompt doesn't already start with template prefix
+    let finalPrompt = trimmed;
+    if (activeMode !== "auto" && activeModeItem.promptPrefix) {
+      if (!trimmed.toLowerCase().startsWith(activeModeItem.promptPrefix.toLowerCase().slice(0, 10))) {
+        finalPrompt = `${activeModeItem.promptPrefix}${trimmed}`;
+      }
+    }
+
     const validAttachments = attachments.filter((a) => a.s3Uri && !a.error);
-    onSend(trimmed, validAttachments.length > 0 ? validAttachments : undefined);
+    onSend(finalPrompt, validAttachments.length > 0 ? validAttachments : undefined);
 
     setText("");
     setAttachments([]);
+    setSlashDismissed(false);
     requestAnimationFrame(() => {
       if (ref.current) {
         ref.current.style.height = "auto";
@@ -221,6 +277,38 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle Slash Command Menu Keyboard Navigation
+    if (isSlashActive && filteredCommands.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex((prev) => (prev + 1) % filteredCommands.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const cmd = filteredCommands[slashIndex] || filteredCommands[0];
+        if (cmd) handleSelectCommand(cmd);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashDismissed(true);
+        return;
+      }
+    }
+
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
   return (
     <div
       className={`composer ${isDragging ? "is-dragging" : ""}`}
@@ -239,6 +327,26 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
             e.target.value = "";
           }
         }}
+      />
+
+      {/* Floating Slash Command Autocomplete Menu */}
+      {isSlashActive && (
+        <SlashCommandMenu
+          filterText={text}
+          selectedIndex={slashIndex}
+          onSelect={handleSelectCommand}
+          onClose={() => setSlashDismissed(true)}
+        />
+      )}
+
+      {/* Quick Mode Toggles Bar */}
+      <ModePills
+        activeMode={activeMode}
+        onSelectMode={(mode) => {
+          setActiveMode(mode);
+          ref.current?.focus();
+        }}
+        disabled={disabled}
       />
 
       {/* Uploaded attachment chips preview */}
@@ -285,6 +393,22 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
           ▸
         </span>
 
+        {/* Active Mode Chip inside Composer */}
+        {activeMode !== "auto" && (
+          <div className="composer__mode-chip">
+            <span className="mode-chip__icon">{activeModeItem.icon}</span>
+            <span className="mode-chip__label mono">{activeModeItem.label}</span>
+            <button
+              type="button"
+              className="mode-chip__remove"
+              onClick={() => setActiveMode("auto")}
+              title="Reset to Auto mode"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Paperclip upload button */}
         <button
           type="button"
@@ -308,15 +432,17 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
               ? "Drop files to attach to Code Interpreter…"
               : isListening
               ? "Listening…"
-              : "Message atelier or drop datasets…"
+              : activeMode !== "auto"
+              ? activeModeItem.placeholder
+              : "Message atelier, type / for commands, or drop datasets…"
           }
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
+          onChange={(e) => {
+            setText(e.target.value);
+            if (slashDismissed && !e.target.value.startsWith("/")) {
+              setSlashDismissed(false);
             }
           }}
+          onKeyDown={handleKeyDown}
           rows={1}
           disabled={disabled}
           spellCheck
@@ -358,9 +484,9 @@ export function Composer({ onSend, disabled, sessionId }: Props) {
       </div>
 
       <div className="composer__hint">
-        <kbd className="mono">Enter</kbd> to send ·{" "}
+        <kbd className="mono">/</kbd> for quick commands · <kbd className="mono">Enter</kbd> to send ·{" "}
         <kbd className="mono">Shift</kbd> + <kbd className="mono">Enter</kbd> for
-        newline · drag & drop CSVs/datasets
+        newline · drag & drop files
       </div>
     </div>
   );
