@@ -3,7 +3,6 @@
 [![AWS Bedrock AgentCore](https://img.shields.io/badge/AWS-Bedrock_AgentCore-orange?logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
 [![Claude 3.7 Sonnet](https://img.shields.io/badge/LLM-Claude_3.7_Sonnet-purple)](https://www.anthropic.com/claude)
 [![React 19](https://img.shields.io/badge/Frontend-React_19_TypeScript-blue?logo=react&logoColor=white)](https://react.dev/)
-[![Live Demo](https://img.shields.io/badge/Live_Demo-CloudFront_CDN-success?logo=cloudflare&logoColor=white)](https://d1rur2clzx2nyl.cloudfront.net)
 [![Observability](https://img.shields.io/badge/Telemetry-Langfuse_OTel-black?logo=opentelemetry&logoColor=white)](https://langfuse.com/)
 
 [ **English** ] | [ [한국어 (Korean)](./README.ko.md) ]
