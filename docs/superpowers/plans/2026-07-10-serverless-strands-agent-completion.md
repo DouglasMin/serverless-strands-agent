@@ -85,7 +85,7 @@ Use this exact non-secret baseline:
       "MEMORY_ID": "serverlessstrands_ChatMemory-4Q3NbO5016",
       "MEMORY_CHATMEMORY_ID": "serverlessstrands_ChatMemory-4Q3NbO5016",
       "WORKLOAD_NAME": "serverlessstrands_MainAgent-4l0O95618E",
-      "OAUTH_CALLBACK_URL": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback",
+      "OAUTH_CALLBACK_URL": "https://<cloudfront-domain>/auth/callback",
       "AGENTCORE_GATEWAY_MAINGATEWAY_AUTH_TYPE": "NONE",
       "AGENTCORE_GATEWAY_MAINGATEWAY_URL": "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp"
     }
@@ -120,7 +120,7 @@ Use this exact non-secret baseline:
       "tavily_api_key": "MANAGED"
     },
     "workloadIdentity": "serverlessstrands_MainAgent-4l0O95618E",
-    "allowedReturnUrl": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback"
+    "allowedReturnUrl": "https://<cloudfront-domain>/auth/callback"
   },
   "sandbox": {
     "codeInterpreter": {
@@ -640,7 +640,7 @@ git commit -m "feat: finalize agentcore code interpreter tool"
 set -euo pipefail
 
 PROMPT="${1:?usage: scripts/smoke_chat.sh '<prompt>'}"
-API_BASE="${API_BASE:-https://d1rur2clzx2nyl.cloudfront.net}"
+API_BASE="${API_BASE:-https://<cloudfront-domain>}"
 USER_ID="${USER_ID:-smoke-user-$(date +%s)}"
 
 curl -sS \
@@ -675,8 +675,8 @@ The first run for each provider should produce an authorization URL. After the p
 
 ```bash
 chmod +x scripts/smoke_chat.sh
-API_BASE=https://d1rur2clzx2nyl.cloudfront.net ./scripts/smoke_chat.sh "Use the finance tool to get the current quote for AAPL and summarize price, currency, and market time."
-API_BASE=https://d1rur2clzx2nyl.cloudfront.net ./scripts/smoke_chat.sh "Use Tavily search for AWS AgentCore Gateway Lambda target examples and summarize the top result."
+API_BASE=https://<cloudfront-domain> ./scripts/smoke_chat.sh "Use the finance tool to get the current quote for AAPL and summarize price, currency, and market time."
+API_BASE=https://<cloudfront-domain> ./scripts/smoke_chat.sh "Use Tavily search for AWS AgentCore Gateway Lambda target examples and summarize the top result."
 ```
 
 Expected: each run reaches `event: done` and includes the expected gateway tool badge event.
@@ -785,7 +785,7 @@ browser_screenshot: "/tool-icons/browser-automation.png",
 
 ```bash
 AWS_PROFILE=developer-dongik AWS_REGION=ap-northeast-2 ./scripts/deploy.sh
-ENABLE_BROWSER_TOOLS=1 API_BASE=https://d1rur2clzx2nyl.cloudfront.net ./scripts/smoke_chat.sh "Use the browser screenshot tool and report the screenshot byte size."
+ENABLE_BROWSER_TOOLS=1 API_BASE=https://<cloudfront-domain> ./scripts/smoke_chat.sh "Use the browser screenshot tool and report the screenshot byte size."
 ```
 
 Expected: answer reports `status: SUCCESS` and `pngBytes` greater than `1000`.
@@ -850,8 +850,8 @@ The wrapper must pass the current user ID and session ID through metadata so spe
 - [ ] **Step 4: Smoke test**
 
 ```bash
-API_BASE=https://d1rur2clzx2nyl.cloudfront.net ./scripts/smoke_chat.sh "Ask the deep research specialist for a short research brief on AWS AgentCore Gateway targets."
-API_BASE=https://d1rur2clzx2nyl.cloudfront.net ./scripts/smoke_chat.sh "Ask the code specialist how this repo should add a new Lambda Gateway tool."
+API_BASE=https://<cloudfront-domain> ./scripts/smoke_chat.sh "Ask the deep research specialist for a short research brief on AWS AgentCore Gateway targets."
+API_BASE=https://<cloudfront-domain> ./scripts/smoke_chat.sh "Ask the code specialist how this repo should add a new Lambda Gateway tool."
 ```
 
 Expected: each run reaches `event: done` and emits a specialist tool-use event.
