@@ -1,7 +1,7 @@
 # ⚡ Serverless Strands: Autonomous Multi-Agent Workspace & Office Deliverables Engine
 
 [![AWS Bedrock AgentCore](https://img.shields.io/badge/AWS-Bedrock_AgentCore-orange?logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
-[![Claude 3.7 Sonnet](https://img.shields.io/badge/LLM-Claude_3.7_Sonnet-purple)](https://www.anthropic.com/claude)
+[![Claude Sonnet 4.6](https://img.shields.io/badge/LLM-Claude_Sonnet_4.6-purple)](https://www.anthropic.com/claude)
 [![React 19](https://img.shields.io/badge/Frontend-React_19_TypeScript-blue?logo=react&logoColor=white)](https://react.dev/)
 [![Observability](https://img.shields.io/badge/Telemetry-Langfuse_OTel-black?logo=opentelemetry&logoColor=white)](https://langfuse.com/)
 
@@ -9,7 +9,7 @@
 
 ---
 
-> An enterprise-grade, serverless autonomous AI agent platform powered by **AWS Bedrock AgentCore**, **Claude 3.7 Sonnet**, and **Agent-to-Agent (A2A) orchestration**. 
+> An enterprise-grade, serverless autonomous AI agent platform powered by **AWS Bedrock AgentCore**, **Claude Sonnet 4.6**, and **Agent-to-Agent (A2A) orchestration**. 
 > Capable of autonomous deep web & academic research, multi-sheet financial modeling (Excel), executive presentation generation (PowerPoint), document synthesis (Word), Python computational sandboxes, and mobility routing—all paired with a high-performance in-browser **Workspace Studio**.
 
 ---
@@ -42,24 +42,32 @@ flowchart TB
         S3UI["S3 Static Hosting Bucket\n(serverlessstrands-dev-ui)"]:::storage
     end
 
+    %% Serverless API Layer
+    subgraph Api ["⚙️ Serverless API Layer"]
+        Cognito["🔑 Amazon Cognito\n(Google IdP Federation)"]:::cloudfront
+        ChatLambda["λ Chat Lambda (Node.js 22)\n(Function URL, SSE Proxy, JWT Auth)"]:::cloudfront
+        SessionsDB["🗄️ DynamoDB\n(Chat Session History)"]:::storage
+    end
+
     %% AWS Serverless Strands Backend
     subgraph AWS ["☁️ AWS Bedrock AgentCore Platform (ap-northeast-2)"]
-        APIGW["AgentCore Main Gateway\n(SSE Stream & MCP Proxy)"]:::cloudfront
+        ToolGW["AgentCore Gateway\n(MCP Tool Proxy)"]:::cloudfront
         
         %% Agents Layer
         subgraph Agents ["🤖 Agent-to-Agent (A2A) Orchestration"]
-            MainAgent["🧠 Main Coordinator Agent\n(Claude 3.7 Sonnet / Bedrock Runtime)"]:::agent
+            MainAgent["🧠 Main Coordinator Agent\n(Claude Sonnet 4.6 / Bedrock Runtime)"]:::agent
             ResearchAgent["🔬 Deep Research Subagent\n(Autonomous Multi-Step Web & ArXiv)"]:::agent
-            ChatMemory["💾 Bedrock Session Memory\n(DynamoDB Short/Long-Term)"]:::storage
+            ChatMemory["💾 AgentCore Memory\n(Summaries, Preferences, Semantic Facts)"]:::storage
         end
 
         %% Execution Tools Layer
         subgraph Tools ["🛠️ Execution Engine & MCP Tools"]
             Sandbox["💻 Python Execution Sandbox\n(Code Interpreter & Charting)"]:::tool
             Office["📄 Office Deliverables Engine\n(openpyxl, python-pptx, python-docx)"]:::tool
-            Mobility["🗺️ Google Mobility & Maps Engine\n(Geocoding, Distance Matrix, Routes)"]:::tool
-            OAuth["🔐 OAuth Integrations\n(GitHub, Notion, Google Calendar, Gmail)"]:::tool
-            WebTools["🌐 Web Intelligence\n(Tavily Search, DuckDuckGo, Wikipedia)"]:::tool
+            Mobility["🗺️ Google Mobility & Maps Engine\n(Geocoding, Place Search, Route Preview)"]:::tool
+            Market["📈 Market & Search Tools\n(Yahoo Finance, Tavily)"]:::tool
+            OAuth["🔐 OAuth Integrations\n(GitHub, Notion, Google Calendar)"]:::tool
+            WebTools["🌐 Research Sources\n(Tavily, Wikipedia, ArXiv)"]:::tool
         end
 
         %% Storage & Deliverables
@@ -78,17 +86,21 @@ flowchart TB
     %% Connections
     Browser <--> CF
     CF <--> S3UI
-    Browser <--> APIGW
-    APIGW <--> MainAgent
+    Browser -. "Google sign-in (ID token)" .-> Cognito
+    CF -- "/api/*" --> ChatLambda
+    ChatLambda <--> SessionsDB
+    ChatLambda <-- "InvokeAgentRuntime (SSE)" --> MainAgent
 
     MainAgent <--> ChatMemory
-    MainAgent <-- "A2A Delegation Protocol" --> ResearchAgent
+    MainAgent <-- "A2A Delegation (InvokeAgentRuntime)" --> ResearchAgent
     ResearchAgent <--> WebTools
 
     MainAgent --> Sandbox
     MainAgent --> Office
-    MainAgent --> Mobility
-    MainAgent --> OAuth
+    MainAgent -- "MCP" --> ToolGW
+    ToolGW --> Mobility
+    ToolGW --> Market
+    MainAgent -- "AgentCore Identity 3LO" --> OAuth
 
     Office --> S3Uploads
     S3Uploads --> Presigned
@@ -108,7 +120,7 @@ flowchart TB
 * **Solves DynamoDB Limits**: Completely eliminates the risk of exceeding the DynamoDB 400KB item size limit and eliminates SSE streaming latency overhead.
 
 ### 2. Multi-Agent Agent-to-Agent (A2A) Delegation
-* **Coordinator + Subagent Pipeline**: The `MainAgent` transparently delegates complex investigation tasks to a specialized `DeepResearchAgent` runtime over MCP/SSE.
+* **Coordinator + Subagent Pipeline**: The `MainAgent` transparently delegates complex investigation tasks to a specialized `DeepResearchAgent` runtime via the AgentCore `InvokeAgentRuntime` API, consuming its streamed response.
 * **Real-time Live Canvas**: Live streaming trace of research steps, search queries, and academic papers (ArXiv / Web) viewed side-by-side in the chat.
 
 ### 3. Unified Workspace Studio & In-Browser Document Previews
@@ -133,9 +145,9 @@ flowchart TB
 | **Frontend** | React 19, TypeScript, Vite | Sub-component modularization, 65% bundle reduction via `manualChunks` |
 | **Edge & Hosting** | AWS CloudFront + Amazon S3 | Global CDN edge caching & SPA distribution |
 | **Agent Runtimes** | AWS Bedrock AgentCore (Firecracker microVMs) | Isolated Python runtime environments for `MainAgent` & `DeepResearchAgent` |
-| **Foundational Model** | Claude 3.7 Sonnet (`anthropic.claude-3-7-sonnet-20250219-v1:0`) | Reasoning, function calling, tool orchestration |
+| **Foundational Model** | Claude Sonnet 4.6 (`global.anthropic.claude-sonnet-4-6`) | Reasoning, function calling, tool orchestration |
 | **Office Tooling** | `openpyxl`, `python-pptx`, `python-docx` | Autonomous programmatic creation of spreadsheets, decks, and dossiers |
-| **Memory Architecture**| Bedrock AgentCore Memory + Amazon DynamoDB | Short-Term Context + Long-Term Semantic & Preference Memory |
+| **Memory Architecture**| Bedrock AgentCore Memory + Amazon DynamoDB | AgentCore Memory: short-term context + long-term semantic & preference memory; DynamoDB: chat session history |
 | **Identity & OAuth** | Amazon Cognito + AgentCore 3LO Identity | Google IdP federation with PKCE; GitHub, Google Calendar, Notion integrations |
 | **Observability** | Langfuse Cloud + OpenTelemetry | Multi-turn latency tracking, tool waterfall inspection, token analytics |
 | **Infrastructure as Code** | Terraform + AgentCore CDK | Declarative reproducible cloud infrastructure |
@@ -161,7 +173,7 @@ flowchart TB
 │   └── app/MainAgent/
 │       ├── office_tools/         # excel_tool.py, powerpoint_tool.py, word_tool.py, s3_storage.py
 │       ├── oauth_tools/          # github.py, google_calendar.py, notion.py
-│       ├── mobility_tools/       # google_maps.py route previews & geocoding
+│       ├── a2a_tools/            # deep_research.py delegation to DeepResearchAgent
 │       └── tests/                # pytest test suite for office and A2A tools
 │
 ├── tools/                        # Gateway tool targets (Lambda / ECR containers)
