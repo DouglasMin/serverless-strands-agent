@@ -127,14 +127,25 @@ def target_lambda_arn(target: dict[str, Any]) -> str | None:
     )
 
 
-def target_tool_names(target: dict[str, Any]) -> set[str]:
-    inline_payload = (
+def target_tool_schema(target: dict[str, Any], s3: Any = None) -> Any:
+    """Inline schema payload, or the S3-hosted one used by CDK-declared targets."""
+    tool_schema = (
         target.get("targetConfiguration", {})
         .get("mcp", {})
         .get("lambda", {})
         .get("toolSchema", {})
-        .get("inlinePayload", [])
     )
+    if "inlinePayload" in tool_schema:
+        return tool_schema["inlinePayload"]
+    uri = tool_schema.get("s3", {}).get("uri", "")
+    if s3 is None or not uri.startswith("s3://"):
+        return []
+    bucket, key = uri.removeprefix("s3://").split("/", 1)
+    return json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
+
+
+def target_tool_names(target: dict[str, Any], s3: Any = None) -> set[str]:
+    inline_payload = target_tool_schema(target, s3)
     names: set[str] = set()
     if isinstance(inline_payload, list):
         for item in inline_payload:
@@ -191,7 +202,7 @@ def audit_memory(control: Any, expected: dict[str, Any], audit: Audit) -> None:
         audit.expect_equal(f"memory namespace {strategy}", namespaces.get(strategy), namespace)
 
 
-def audit_gateway(control: Any, expected: dict[str, Any], audit: Audit) -> None:
+def audit_gateway(control: Any, s3: Any, expected: dict[str, Any], audit: Audit) -> None:
     gateway_expected = expected["gateway"]
     gateways = list_items(control, "list_gateways", "items")
     gateway = find_by_any_name(gateways, gateway_expected["name"])
@@ -223,7 +234,11 @@ def audit_gateway(control: Any, expected: dict[str, Any], audit: Audit) -> None:
             target_lambda_arn(target_detail),
             target_expected["lambdaArn"],
         )
-        actual_tools = target_tool_names(target_detail)
+        try:
+            actual_tools = target_tool_names(target_detail, s3)
+        except (BotoCoreError, ClientError) as exc:
+            audit.fail(f"gateway target {target_name} tool schema unreadable: {exc}")
+            continue
         for tool_name in target_expected.get("tools", []):
             if tool_name in actual_tools:
                 audit.ok(f"gateway target {target_name} tool {tool_name}: present")
@@ -324,11 +339,12 @@ def run_audit(expected: dict[str, Any], profile: str | None) -> Audit:
     session = boto3.Session(profile_name=profile, region_name=region) if profile else boto3.Session(region_name=region)
     control = create_client(session, "bedrock-agentcore-control", region)
     logs = create_client(session, "logs", region)
+    s3 = create_client(session, "s3", region)
     audit = Audit()
 
     audit_runtime(control, expected, audit)
     audit_memory(control, expected, audit)
-    audit_gateway(control, expected, audit)
+    audit_gateway(control, s3, expected, audit)
     audit_identity(control, expected, audit)
     audit_sandbox(control, expected, audit)
     audit_registry(control, expected, audit)

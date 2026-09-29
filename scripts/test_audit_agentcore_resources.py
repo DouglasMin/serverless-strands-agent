@@ -54,6 +54,34 @@ class AuditAgentCoreResourcesTest(unittest.TestCase):
             },
         )
 
+    def test_target_tool_names_reads_inline_schema(self):
+        target = {"targetConfiguration": {"mcp": {"lambda": {"toolSchema": {"inlinePayload": [{"name": "stock_quote"}]}}}}}
+
+        self.assertEqual(audit.target_tool_names(target), {"stock_quote"})
+
+    def test_target_tool_names_reads_s3_hosted_schema(self):
+        # CDK-declared lambdaFunctionArn targets store their schema as an S3 asset.
+        target = {"targetConfiguration": {"mcp": {"lambda": {"toolSchema": {"s3": {"uri": "s3://cdk-assets/abc.json"}}}}}}
+        s3 = FakeS3({("cdk-assets", "abc.json"): b'[{"name": "stock_quote"}, {"name": "stock_history"}]'})
+
+        self.assertEqual(audit.target_tool_names(target, s3), {"stock_quote", "stock_history"})
+
+
+class FakeS3:
+    def __init__(self, objects):
+        self.objects = objects
+
+    def get_object(self, Bucket, Key):
+        return {"Body": FakeBody(self.objects[(Bucket, Key)])}
+
+
+class FakeBody:
+    def __init__(self, data):
+        self.data = data
+
+    def read(self):
+        return self.data
+
 
 if __name__ == "__main__":
     unittest.main()
