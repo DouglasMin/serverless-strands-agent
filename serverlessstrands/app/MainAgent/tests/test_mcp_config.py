@@ -8,6 +8,13 @@ def test_prefers_explicit_gateway_mcp_endpoint(monkeypatch):
     assert get_gateway_mcp_endpoint() == "https://explicit.example.com/mcp"
 
 
+def test_prefers_iam_tool_gateway_over_legacy_main_gateway(monkeypatch):
+    monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
+    monkeypatch.setenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", "https://tool.example.com/mcp")
+    monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://main.example.com/mcp")
+    assert get_gateway_mcp_endpoint() == "https://tool.example.com/mcp"
+
+
 def test_uses_agentcore_injected_gateway_url(monkeypatch):
     monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
     monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://agentcore.example.com/mcp")

@@ -120,6 +120,39 @@
       "authorizerType": "NONE",
       "enableSemanticSearch": true,
       "exceptionLevel": "NONE"
+    },
+    {
+      "name": "ToolGateway",
+      "description": "IAM-authenticated gateway for the tool Lambdas",
+      "targets": [
+        {
+          "name": "yahoo-finance",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-finance",
+            "toolSchemaFile": "../tools/finance/tool-schema.json"
+          }
+        },
+        {
+          "name": "tavily-lamdba-tool",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-tavily",
+            "toolSchemaFile": "../tools/tavily/tool-schema.json"
+          }
+        },
+        {
+          "name": "google-maps",
+          "targetType": "lambdaFunctionArn",
+          "lambdaFunctionArn": {
+            "lambdaArn": "arn:aws:lambda:ap-northeast-2:612529367436:function:serverlessstrands-dev-tool-google-maps",
+            "toolSchemaFile": "../tools/google-maps/tool-schema.json"
+          }
+        }
+      ],
+      "authorizerType": "AWS_IAM",
+      "enableSemanticSearch": true,
+      "exceptionLevel": "NONE"
     }
   ],
   "policyEngines": [],
