@@ -95,7 +95,7 @@ API key providers verified:
 Workload identity verified:
 
 - Name: `serverlessstrands_MainAgent-4l0O95618E`
-- Allowed return URL includes `https://d1rur2clzx2nyl.cloudfront.net/auth/callback`
+- Allowed return URL includes `https://<cloudfront-domain>/auth/callback`
 
 Token vault verified:
 

@@ -1,13 +1,13 @@
 # ⚡ Serverless Strands: 자율형 멀티에이전트 워크스페이스 & 오피스 산출물 엔진
 
 [![AWS Bedrock AgentCore](https://img.shields.io/badge/AWS-Bedrock_AgentCore-orange?logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
-[![Claude 3.7 Sonnet](https://img.shields.io/badge/LLM-Claude_3.7_Sonnet-purple)](https://www.anthropic.com/claude)
+[![Claude Sonnet 4.6](https://img.shields.io/badge/LLM-Claude_Sonnet_4.6-purple)](https://www.anthropic.com/claude)
 [![React 19](https://img.shields.io/badge/Frontend-React_19_TypeScript-blue?logo=react&logoColor=white)](https://react.dev/)
 [![Observability](https://img.shields.io/badge/Telemetry-Langfuse_OTel-black?logo=opentelemetry&logoColor=white)](https://langfuse.com/)
 
 [ [English](./README.md) ] | [ **한국어** ]
 
-> **AWS Bedrock AgentCore**, **Claude 3.7 Sonnet**, 그리고 **Agent-to-Agent (A2A) 오케스트레이션** 기반의 엔터프라이즈급 서버리스 자율 AI 에이전트 플랫폼입니다.
+> **AWS Bedrock AgentCore**, **Claude Sonnet 4.6**, 그리고 **Agent-to-Agent (A2A) 오케스트레이션** 기반의 엔터프라이즈급 서버리스 자율 AI 에이전트 플랫폼입니다.
 > 자율 심층 웹/학술 리서치, 다중 시트 재무 모델링(Excel), 경영진 발표 자료 생성(PowerPoint), 보고서 작성(Word), Python 코드 인터프리터 샌드박스, 모빌리티 경로 추천을 제공하며, 브라우저 내 인터랙티브 **Workspace Studio**를 통해 실시간으로 확인하고 다운로드할 수 있습니다.
 
 ---
@@ -40,24 +40,32 @@ flowchart TB
         S3UI["S3 정적 호스팅 버킷\n(serverlessstrands-dev-ui)"]:::storage
     end
 
+    %% Serverless API Layer
+    subgraph Api ["⚙️ 서버리스 API 계층"]
+        Cognito["🔑 Amazon Cognito\n(Google IdP 페더레이션)"]:::cloudfront
+        ChatLambda["λ 채팅 Lambda (Node.js 22)\n(Function URL, SSE 프록시, JWT 인증)"]:::cloudfront
+        SessionsDB["🗄️ DynamoDB\n(채팅 세션 기록)"]:::storage
+    end
+
     %% AWS Serverless Strands Backend
     subgraph AWS ["☁️ AWS Bedrock AgentCore 플랫폼 (ap-northeast-2)"]
-        APIGW["AgentCore 메인 게이트웨이\n(SSE 스트림 & MCP 프록시)"]:::cloudfront
+        ToolGW["AgentCore 게이트웨이\n(MCP 도구 프록시)"]:::cloudfront
         
         %% Agents Layer
         subgraph Agents ["🤖 Agent-to-Agent (A2A) 에이전트 오케스트레이션"]
-            MainAgent["🧠 메인 코디네이터 에이전트\n(Claude 3.7 Sonnet / Bedrock 런타임)"]:::agent
+            MainAgent["🧠 메인 코디네이터 에이전트\n(Claude Sonnet 4.6 / Bedrock 런타임)"]:::agent
             ResearchAgent["🔬 딥 리서치 서브에이전트\n(자율 웹 & ArXiv 논문 조사)"]:::agent
-            ChatMemory["💾 Bedrock 세션 메모리\n(DynamoDB 단기/장기 메모리)"]:::storage
+            ChatMemory["💾 AgentCore 메모리\n(대화 요약, 사용자 선호, 시맨틱 사실)"]:::storage
         end
 
         %% Execution Tools Layer
         subgraph Tools ["🛠️ 실행 엔진 & MCP 도구"]
             Sandbox["💻 파이썬 실행 샌드박스\n(코드 인터프리터 & 차트 시각화)"]:::tool
             Office["📄 오피스 산출물 엔진\n(openpyxl, python-pptx, python-docx)"]:::tool
-            Mobility["🗺️ Google 모빌리티 & 지도 엔진\n(지오코딩, 거리 매트릭스, 경로)"]:::tool
-            OAuth["🔐 OAuth 서드파티 연동\n(GitHub, Notion, Google Calendar, Gmail)"]:::tool
-            WebTools["🌐 웹 인텔리전스 도구\n(Tavily Search, DuckDuckGo, Wikipedia)"]:::tool
+            Mobility["🗺️ Google 모빌리티 & 지도 엔진\n(지오코딩, 장소 검색, 경로 프리뷰)"]:::tool
+            Market["📈 금융 & 검색 도구\n(Yahoo Finance, Tavily)"]:::tool
+            OAuth["🔐 OAuth 서드파티 연동\n(GitHub, Notion, Google Calendar)"]:::tool
+            WebTools["🌐 리서치 소스\n(Tavily, Wikipedia, ArXiv)"]:::tool
         end
 
         %% Storage & Deliverables
@@ -76,17 +84,21 @@ flowchart TB
     %% Connections
     Browser <--> CF
     CF <--> S3UI
-    Browser <--> APIGW
-    APIGW <--> MainAgent
+    Browser -. "Google 로그인 (ID 토큰)" .-> Cognito
+    CF -- "/api/*" --> ChatLambda
+    ChatLambda <--> SessionsDB
+    ChatLambda <-- "InvokeAgentRuntime (SSE)" --> MainAgent
 
     MainAgent <--> ChatMemory
-    MainAgent <-- "A2A 위임 프로토콜" --> ResearchAgent
+    MainAgent <-- "A2A 위임 (InvokeAgentRuntime)" --> ResearchAgent
     ResearchAgent <--> WebTools
 
     MainAgent --> Sandbox
     MainAgent --> Office
-    MainAgent --> Mobility
-    MainAgent --> OAuth
+    MainAgent -- "MCP" --> ToolGW
+    ToolGW --> Mobility
+    ToolGW --> Market
+    MainAgent -- "AgentCore Identity 3LO" --> OAuth
 
     Office --> S3Uploads
     S3Uploads --> Presigned
@@ -132,9 +144,9 @@ flowchart TB
 | **프론트엔드** | React 19, TypeScript, Vite | 서브 컴포넌트 모듈화, Vite Rollup `manualChunks`로 초기 번들 65% 경량화 |
 | **CDN & 호스팅** | AWS CloudFront + Amazon S3 | 글로벌 엣지 캐싱 및 SPA 정적 호스팅 |
 | **에이전트 런타임** | AWS Bedrock AgentCore (Firecracker microVM) | `MainAgent` 및 `DeepResearchAgent` 독립 격리 런타임 환경 |
-| **파운데이션 모델**| Claude 3.7 Sonnet | 복합 추론, 도구 호출, 멀티에이전트 오케스트레이션 |
+| **파운데이션 모델**| Claude Sonnet 4.6 | 복합 추론, 도구 호출, 멀티에이전트 오케스트레이션 |
 | **오피스 생성** | `openpyxl`, `python-pptx`, `python-docx` | 엑셀, 파워포인트, 워드 산출물 자율 생성 엔진 |
-| **메모리** | Bedrock AgentCore Memory + DynamoDB | 단기 대화 컨텍스트 + 장기 시맨틱 & 사용자 선호도 메모리 |
+| **메모리** | Bedrock AgentCore Memory + DynamoDB | AgentCore Memory: 단기 대화 컨텍스트 + 장기 시맨틱 & 사용자 선호도 메모리 / DynamoDB: 채팅 세션 기록 |
 | **인증 & OAuth** | Amazon Cognito + AgentCore 3LO Identity | Google IdP 소셜 로그인 (PKCE), GitHub, Google Calendar, Notion 연동 |
 | **모니터링** | Langfuse Cloud + OpenTelemetry | 멀티턴 지연시간 추적, 도구 워터폴 시각화, 토큰 사용량 분석 |
 | **IaC** | Terraform + AgentCore CDK | 인프라 자동화 코드 관리 |
@@ -160,7 +172,7 @@ flowchart TB
 │   └── app/MainAgent/
 │       ├── office_tools/         # excel_tool.py, powerpoint_tool.py, word_tool.py, s3_storage.py
 │       ├── oauth_tools/          # github.py, google_calendar.py, notion.py
-│       ├── mobility_tools/       # google_maps.py 경로 프리뷰 & 지오코딩
+│       ├── a2a_tools/            # deep_research.py DeepResearchAgent 위임
 │       └── tests/                # pytest 테스트 스위트
 │
 ├── tools/                        # 게이트웨이 도구 타깃 (Lambda / ECR 컨테이너)
