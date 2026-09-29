@@ -117,7 +117,7 @@
       "name": "MainGateway",
       "description": "Gateway for MainGateway",
       "targets": [],
-      "authorizerType": "AWS_IAM",
+      "authorizerType": "NONE",
       "enableSemanticSearch": true,
       "exceptionLevel": "NONE"
     }
