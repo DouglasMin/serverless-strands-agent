@@ -114,14 +114,6 @@
   "onlineEvalConfigs": [],
   "agentCoreGateways": [
     {
-      "name": "MainGateway",
-      "description": "Gateway for MainGateway",
-      "targets": [],
-      "authorizerType": "NONE",
-      "enableSemanticSearch": true,
-      "exceptionLevel": "NONE"
-    },
-    {
       "name": "ToolGateway",
       "description": "IAM-authenticated gateway for the tool Lambdas",
       "targets": [

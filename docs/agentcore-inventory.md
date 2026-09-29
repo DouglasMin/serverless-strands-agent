@@ -42,8 +42,8 @@ Registry is therefore `unknown`, not confirmed absent.
   - `MEMORY_CHATMEMORY_ID`
   - `WORKLOAD_NAME`
   - `OAUTH_CALLBACK_URL`
-  - `AGENTCORE_GATEWAY_MAINGATEWAY_AUTH_TYPE`
-  - `AGENTCORE_GATEWAY_MAINGATEWAY_URL`
+  - `AGENTCORE_GATEWAY_TOOLGATEWAY_AUTH_TYPE`
+  - `AGENTCORE_GATEWAY_TOOLGATEWAY_URL`
 
 ### Memory
 
@@ -57,10 +57,12 @@ Registry is therefore `unknown`, not confirmed absent.
 
 ### Gateway
 
-- Gateway: `serverlessstrands-MainGateway`
-- URL: `https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp`
+- Gateway: `serverlessstrands-ToolGateway`
+- URL: `https://serverlessstrands-toolgateway-ika6p9dxdd.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp`
 - Status: `READY`
-- Auth: `NONE`
+- Auth: `AWS_IAM`. Callers sign with SigV4 and need `bedrock-agentcore:InvokeGateway`, which the AgentCore CDK grants to each runtime role. Unsigned requests get `401`.
+
+An existing gateway's authorizer cannot be changed (`Authorizer type cannot be updated for an existing gateway`), so this gateway replaced the unauthenticated `serverlessstrands-MainGateway` instead of updating it.
 
 Targets verified:
 
@@ -70,15 +72,7 @@ Targets verified:
 | `tavily-lamdba-tool` | `serverlessstrands-dev-tool-tavily` | `TavilySearchPost`, `TavilySearchExtract` |
 | `google-maps` | `serverlessstrands-dev-tool-google-maps` | `google_maps_geocode`, `google_maps_place_search`, `google_maps_compute_route`, `google_maps_route_preview` |
 
-The `google-maps` target is expected after the Google Maps Lambda is deployed and registered:
-
-```bash
-terraform -chdir=infra/envs/dev apply -var-file=terraform.tfvars
-python3 scripts/register_google_maps_gateway_target.py \
-  --profile developer-dongik \
-  --region ap-northeast-2 \
-  --lambda-arn "$(terraform -chdir=infra/envs/dev output -raw google_maps_lambda_arn)"
-```
+The targets are declared in `agentcore.json` as `lambdaFunctionArn` targets that point at the Terraform-managed tool Lambdas, with schemas from `tools/*/tool-schema.json`. `agentcore deploy` registers them and grants the gateway role `lambda:InvokeFunction`. The CDK uploads each schema as an S3 asset, and the audit reads tool names from there.
 
 ### Identity
 
@@ -115,19 +109,18 @@ Token vault verified:
 
 ## Source-Of-Truth Drift
 
-`serverlessstrands/agentcore/agentcore.json` declares the runtime, memory, and gateway shell, but does not declare the currently deployed credentials or gateway targets:
+`serverlessstrands/agentcore/agentcore.json` declares the runtimes, memory, and the gateway **including its targets**. It still does not declare the Identity credential providers, which already exist in AWS:
 
 ```json
-"credentials": [],
-"targets": []
+"credentials": []
 ```
 
-This is intentional for now because these resources already exist in AWS and the repo is using AgentCore CLI plus manual/API-managed AgentCore resources. The drift is now guarded by `scripts/audit_agentcore_resources.py`.
+The drift is guarded by `scripts/audit_agentcore_resources.py`.
 
 Later decision:
 
-- Keep this as an out-of-band AgentCore resource model with audit checks.
-- Or import/encode Gateway targets and Identity providers into the AgentCore project config if the CLI supports those resource shapes reliably.
+- Keep the Identity providers out-of-band with audit checks.
+- Or encode them in the AgentCore project config if the CLI supports those resource shapes reliably.
 
 ## Interpretation
 

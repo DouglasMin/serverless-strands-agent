@@ -33,17 +33,13 @@ Google Calendar remains a direct AgentCore Identity 3LO tool because it acts on 
 Deploy order:
 
 1. Deploy the Google Maps tool Lambda with Terraform.
-2. Register or update the `google-maps` Gateway target.
-3. Deploy MainAgent so the runtime prompt and `show_route_preview` tool are available.
-4. Deploy backend and frontend so `userLocation` and `route_preview` events pass through.
-5. Run the AgentCore inventory audit.
+2. Deploy AgentCore (`./scripts/deploy.sh`). The `google-maps` target is declared on `ToolGateway` in `agentcore.json`, so this registers the target and also ships the runtime prompt and the `show_route_preview` tool.
+3. Deploy backend and frontend so `userLocation` and `route_preview` events pass through.
+4. Run the AgentCore inventory audit.
 
 ```bash
 terraform -chdir=infra/envs/dev apply -var-file=terraform.tfvars
-python3 scripts/register_google_maps_gateway_target.py \
-  --profile developer-dongik \
-  --region ap-northeast-2 \
-  --lambda-arn "$(terraform -chdir=infra/envs/dev output -raw google_maps_lambda_arn)"
+AWS_PROFILE=developer-dongik AWS_REGION=ap-northeast-2 ./scripts/deploy.sh
 python3 scripts/audit_agentcore_resources.py --profile developer-dongik
 ```
 

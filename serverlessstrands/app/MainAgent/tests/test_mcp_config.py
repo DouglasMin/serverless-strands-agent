@@ -1,33 +1,35 @@
 import mcp_client.client as client_module
 from mcp_client.config import get_gateway_mcp_endpoint
 
+TOOL_GATEWAY_URL = (
+    "https://serverlessstrands-toolgateway-ika6p9dxdd.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp"
+)
+
 
 def test_prefers_explicit_gateway_mcp_endpoint(monkeypatch):
     monkeypatch.setenv("GATEWAY_MCP_ENDPOINT", "https://explicit.example.com/mcp")
-    monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://agentcore.example.com/mcp")
+    monkeypatch.setenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", "https://agentcore.example.com/mcp")
     assert get_gateway_mcp_endpoint() == "https://explicit.example.com/mcp"
-
-
-def test_prefers_iam_tool_gateway_over_legacy_main_gateway(monkeypatch):
-    monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
-    monkeypatch.setenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", "https://tool.example.com/mcp")
-    monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://main.example.com/mcp")
-    assert get_gateway_mcp_endpoint() == "https://tool.example.com/mcp"
 
 
 def test_uses_agentcore_injected_gateway_url(monkeypatch):
     monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
-    monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://agentcore.example.com/mcp")
+    monkeypatch.setenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", "https://agentcore.example.com/mcp")
     assert get_gateway_mcp_endpoint() == "https://agentcore.example.com/mcp"
+
+
+def test_ignores_removed_legacy_main_gateway(monkeypatch):
+    # The legacy MainGateway had no inbound auth; it must never be selected again.
+    monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
+    monkeypatch.delenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", raising=False)
+    monkeypatch.setenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", "https://legacy.example.com/mcp")
+    assert get_gateway_mcp_endpoint() == TOOL_GATEWAY_URL
 
 
 def test_falls_back_to_known_gateway(monkeypatch):
     monkeypatch.delenv("GATEWAY_MCP_ENDPOINT", raising=False)
-    monkeypatch.delenv("AGENTCORE_GATEWAY_MAINGATEWAY_URL", raising=False)
-    assert (
-        get_gateway_mcp_endpoint()
-        == "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp"
-    )
+    monkeypatch.delenv("AGENTCORE_GATEWAY_TOOLGATEWAY_URL", raising=False)
+    assert get_gateway_mcp_endpoint() == TOOL_GATEWAY_URL
 
 
 def test_gateway_transport_signs_requests_with_sigv4(monkeypatch):
