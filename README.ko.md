@@ -14,7 +14,7 @@
 
 ## 🏗️ 시스템 아키텍처 다이어그램
 
-![시스템 아키텍처](./architecture22.drawio.png)
+![시스템 아키텍처](./architecture-v2.drawio.png)
 
 ```mermaid
 flowchart TB
