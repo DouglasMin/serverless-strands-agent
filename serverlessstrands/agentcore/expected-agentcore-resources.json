@@ -10,7 +10,7 @@
       "MEMORY_CHATMEMORY_ID": "serverlessstrands_ChatMemory-4Q3NbO5016",
       "WORKLOAD_NAME": "serverlessstrands_MainAgent-4l0O95618E",
       "OAUTH_CALLBACK_URL": "https://d1rur2clzx2nyl.cloudfront.net/auth/callback",
-      "AGENTCORE_GATEWAY_MAINGATEWAY_AUTH_TYPE": "NONE",
+      "AGENTCORE_GATEWAY_MAINGATEWAY_AUTH_TYPE": "AWS_IAM",
       "AGENTCORE_GATEWAY_MAINGATEWAY_URL": "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp"
     }
   },
@@ -28,7 +28,7 @@
     "name": "serverlessstrands-MainGateway",
     "status": "READY",
     "url": "https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp",
-    "authorizerType": "NONE",
+    "authorizerType": "AWS_IAM",
     "targets": {
       "yahoo-finance": {
         "status": "READY",
