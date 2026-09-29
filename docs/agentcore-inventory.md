@@ -60,7 +60,7 @@ Registry is therefore `unknown`, not confirmed absent.
 - Gateway: `serverlessstrands-MainGateway`
 - URL: `https://serverlessstrands-maingateway-fiobtnuvkj.gateway.bedrock-agentcore.ap-northeast-2.amazonaws.com/mcp`
 - Status: `READY`
-- Auth: `AWS_IAM` (callers sign with SigV4 and need `bedrock-agentcore:InvokeGateway`, which the AgentCore CDK grants to each runtime role)
+- Auth: `NONE`
 
 Targets verified:
 
